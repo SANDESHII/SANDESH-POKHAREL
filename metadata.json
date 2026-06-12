@@ -1,0 +1,9 @@
+{
+  "name": "Match Report Pro",
+  "description": "Professional football match analysis tool providing deep statistical insights and real-time performance trends using AI-powered search grounding.",
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ],
+  "requestFramePermissions": [],
+  "prompt": ""
+}
