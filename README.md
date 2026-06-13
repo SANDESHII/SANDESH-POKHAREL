@@ -2,12 +2,11 @@
 <img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
 </div>
 
-# Run and deploy your AI Studio app
+# 📊 SANDESH-POKHAREL: AI-Powered Football Predictions
 
-This contains everything you need to run your app locally.
+Welcome to the ultimate workspace for football match analytics and predictions. This project combines advanced data tracking with a sleek, interactive terminal-style user interface, built entirely on top of TypeScript and Vite.
 
-View your app in AI Studio: https://ai.studio/apps/98831e9d-225e-4691-9ebf-6705c1011a39
-
+[View Live App in AI Studio](https://ai.studio/apps/98831e9d-225e-4691-9ebf-6705c1011a39)
 ## Run Locally
 
 **Prerequisites:**  Node.js
