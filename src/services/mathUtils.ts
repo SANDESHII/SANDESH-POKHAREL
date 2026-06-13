@@ -154,10 +154,11 @@ export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: st
     const dynamicD = highInertiaLeagues.some(l => league.toUpperCase().includes(l)) ? 0.6 : 0.3;
 
     // 2. Calculate Dynamic R (Measurement Noise)
-    // Directly weaponize the empirical variance from ingestion consensus.
-    // Instead of a blind multiplier, R scales linearly with the statistical discrepancy (Variance).
-    const homeR = Math.max(0.08, (away.avgXGA / 12) + (maxVariance * 1.2));
-    const awayR = Math.max(0.08, (home.avgXGA / 12) + (maxVariance * 1.2));
+    // Directly weaponize the empirical variance from the institutional ingestion layer.
+    // Instead of a blind multiplier, R is anchored to the statistical discrepancy (Variance)
+    // and scaled by the baseline defensive expectation.
+    const homeR = Math.max(0.1, (away.avgXGA / 15) + maxVariance);
+    const awayR = Math.max(0.1, (home.avgXGA / 15) + maxVariance);
 
     // 3. Initial State Estimation (Kalman + Neural Memory)
     const homeMemory = new NeuralMemoryBridge(home.npxG);

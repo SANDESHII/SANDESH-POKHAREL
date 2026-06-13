@@ -15,6 +15,7 @@ import {
     calculateEVTRisk
 } from "./mathUtils";
 import { AnalysisResult, MatchContext, MarketReality, MirrorMatch, ProsecutionCase, TeamStats, RegimeState } from "../types";
+import { IngestionService } from "./ingestionService";
 
 const MODEL_NAME = 'gemini-3-flash-preview'; 
 const CACHE_FILE = path.join(process.cwd(), 'match_cache.json');
@@ -301,40 +302,17 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         }
         const parsedData = JSON.parse(text.trim());
 
-        // --- INSTITUTIONAL DATA STANDARDIZATION (CONVENANCE LAYER) ---
-        // Uses a Median-Absolute-Deviation (MAD) inspired consensus to filter outliers
-        const standardize = (team: any, matrix: any) => {
-            const uBias = matrix.understatBias || 0.88;
-            const sBias = matrix.sofaScoreBias || 0.94;
+        // --- ASYNCHRONOUS CONSENSUS LAYER ---
+        // Decoupled ingestion logic for structural purity and outlier filtering
+        const homeData = IngestionService.standardize(parsedData.home, parsedData.calibration);
+        const awayData = IngestionService.standardize(parsedData.away, parsedData.calibration);
 
-            const v1 = team.npxG || 0;
-            const v2 = (team.npxG_Understat || 0) * uBias;
-            const v3 = (team.npxG_SofaScore || 0) * sBias;
-
-            // Consensus: Takes the median of the three standardized values to eliminate single-source bias
-            const values = [v1, v2, v3].sort((a, b) => a - b);
-            team.npxG = values[1]; // Median of 3 sources
-            
-            // Apply MEC (Missing Expected Contribution)
-            team.npxG = Math.max(0, team.npxG - (team.missingExpectedG || 0));
-            team.xT = Math.max(0, (team.xT || 0) - (team.missingExpectedT || 0));
-
-            // --- ASYNCHRONOUS SEQUENCE REHYDRATION ---
-            // Ensures sequences are exactly 10 games, backfilling with mean if telemetry is dropped.
-            const rehydrate = (seq: number[] | undefined, fallback: number) => {
-                const s = [...(seq || [])].filter(v => typeof v === 'number' && !isNaN(v));
-                while (s.length < 10) s.unshift(fallback);
-                return s.slice(-10);
-            };
-
-            team.npxGSequence = rehydrate(team.npxGSequence, team.npxG);
-            team.xGASequence = rehydrate(team.xGASequence, team.goalsConceded / 10 || 1.1);
+        const data = {
+            ...parsedData,
+            home: homeData,
+            away: awayData
         };
 
-        standardize(parsedData.home, parsedData.calibration);
-        standardize(parsedData.away, parsedData.calibration);
-
-        const data = parsedData;
         const rawSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
         const sources = rawSources
             .map((c: any) => ({ title: c.web?.title || 'Expert Source', uri: c.web?.uri }))
@@ -359,23 +337,9 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         }
 
         // --- LIVE COVARIANCE TRACKING ---
-        // Calculates the empirical variance across sources as the "Measurement Noise" (R)
-        const calculateEmpiricalVariance = (team: any, matrix: any) => {
-            const uBias = matrix.understatBias || 0.88;
-            const sBias = matrix.sofaScoreBias || 0.94;
-            
-            const vals = [
-                team.npxG_Raw || team.npxG, // Original npxG before standardization
-                (team.npxG_Understat || 0) * uBias,
-                (team.npxG_SofaScore || 0) * sBias
-            ];
-            const mean = vals.reduce((a, b) => a + b, 0) / 3;
-            // Return variance: (Sum of squares diff) / N
-            return vals.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / 3;
-        };
-
-        const homeVar = calculateEmpiricalVariance(data.home, data.calibration);
-        const awayVar = calculateEmpiricalVariance(data.away, data.calibration);
+        // Feeds the true empirical variance directly into the Kalman measurement noise (R)
+        const homeVar = IngestionService.calculateEmpiricalVariance(data.home);
+        const awayVar = IngestionService.calculateEmpiricalVariance(data.away);
         const maxVariance = Math.max(homeVar, awayVar);
 
         // --- MATH EXECUTION ---
