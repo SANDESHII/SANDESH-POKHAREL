@@ -154,9 +154,10 @@ export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: st
     const dynamicD = highInertiaLeagues.some(l => league.toUpperCase().includes(l)) ? 0.6 : 0.3;
 
     // 2. Calculate Dynamic R (Measurement Noise)
-    // Weaponized Variance Gate: Inject maxVariance directly into measurement noise
-    const homeR = Math.max(0.05, Math.min(2.0, (away.avgXGA / 10) + (maxVariance * 1.5)));
-    const awayR = Math.max(0.05, Math.min(2.0, (home.avgXGA / 10) + (maxVariance * 1.5)));
+    // Directly weaponize the empirical variance from ingestion consensus.
+    // Instead of a blind multiplier, R scales linearly with the statistical discrepancy (Variance).
+    const homeR = Math.max(0.08, (away.avgXGA / 12) + (maxVariance * 1.2));
+    const awayR = Math.max(0.08, (home.avgXGA / 12) + (maxVariance * 1.2));
 
     // 3. Initial State Estimation (Kalman + Neural Memory)
     const homeMemory = new NeuralMemoryBridge(home.npxG);
