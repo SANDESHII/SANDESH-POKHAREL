@@ -9,6 +9,16 @@ export interface TeamStats {
     xT: number;   
     form: number[];
     cleanSheets: number;
+    // New metrics for variance and context
+    npxG_Understat?: number;
+    npxG_SofaScore?: number;
+    redCardAnomalyMinutes?: number;
+    managerSacked?: boolean;
+    injuryCount?: number;
+    missingExpectedG?: number;
+    missingExpectedT?: number;
+    npxGSequence?: number[];
+    xGASequence?: number[];
 }
 
 export interface RegimeState {
@@ -62,6 +72,18 @@ export interface AnalysisResult {
     mirrorMatches: MirrorMatch[];
     prosecution: ProsecutionCase;
     modelAudit: ModelAudit;
+    // System Status
+    killSwitchTriggered: boolean;
+    maxVariance: number;
+    modelMode: 'NUCLEAR_FORTRESS' | 'POISSON_FALLBACK';
+    matchContextFlag?: 'Dead-Rubber' | 'Derby' | 'Standard';
+    calibration?: CalibrationMatrix;
+}
+
+export interface CalibrationMatrix {
+    understatBias: number;
+    sofaScoreBias: number;
+    calibrationConfidence: number;
 }
 
 export interface ModelAudit {

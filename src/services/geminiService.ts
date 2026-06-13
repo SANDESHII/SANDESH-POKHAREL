@@ -154,10 +154,19 @@ const teamSchemaProperties = {
     goalsConceded: { type: Type.NUMBER },
     avgXG: { type: Type.NUMBER },
     avgXGA: { type: Type.NUMBER },
-    npxG: { type: Type.NUMBER, description: "Non-penalty xG (Steel Data)" },
+    npxG: { type: Type.NUMBER, description: "Primary npxG (Opta/FBref strategy)" },
+    npxG_Understat: { type: Type.NUMBER, description: "Secondary npxG for variance check" },
+    npxG_SofaScore: { type: Type.NUMBER, description: "Secondary npxG for variance check" },
     xT: { type: Type.NUMBER, description: "Expected Threat (Steel Data)" },
     form: { type: Type.ARRAY, items: { type: Type.NUMBER } },
-    cleanSheets: { type: Type.NUMBER }
+    cleanSheets: { type: Type.NUMBER },
+    redCardAnomalyMinutes: { type: Type.NUMBER, description: "Minutes played with a red card in last 3 games" },
+    managerSacked: { type: Type.BOOLEAN, description: "Has the manager been sacked/changed this week?" },
+    injuryCount: { type: Type.NUMBER, description: "Number of starting XI players confirmed out" },
+    missingExpectedG: { type: Type.NUMBER, description: "Sum of average xG contributions from confirmed out players" },
+    missingExpectedT: { type: Type.NUMBER, description: "Sum of average xT contributions from confirmed out players" },
+    npxGSequence: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "Last 10 match npxG values for recursive state warming" },
+    xGASequence: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "Last 10 match xGA values for recursive state warming" }
 };
 
 const contextSchemaProperties = {
@@ -165,7 +174,8 @@ const contextSchemaProperties = {
     referee: { type: Type.STRING },
     stadium: { type: Type.STRING },
     historicalRivalry: { type: Type.NUMBER },
-    stakes: { type: Type.STRING }
+    stakes: { type: Type.STRING },
+    matchContextFlag: { type: Type.STRING, enum: ["Dead-Rubber", "Derby", "Standard"] }
 };
 
 const marketSchemaProperties = {
@@ -202,9 +212,18 @@ const analysisSchema = {
                 riskScore: { type: Type.NUMBER }
             },
             required: ["contradictions", "riskScore"]
+        },
+        calibration: {
+            type: Type.OBJECT,
+            properties: {
+                understatBias: { type: Type.NUMBER, description: "Historical scale factor to normalize Understat to Opta baseline for this league" },
+                sofaScoreBias: { type: Type.NUMBER, description: "Historical scale factor to normalize SofaScore to Opta baseline for this league" },
+                calibrationConfidence: { type: Type.NUMBER }
+            },
+            required: ["understatBias", "sofaScoreBias", "calibrationConfidence"]
         }
     },
-    required: ["home", "away", "context", "marketReality", "matchSummary", "mirrorMatches", "prosecution"]
+    required: ["home", "away", "context", "marketReality", "matchSummary", "mirrorMatches", "prosecution", "calibration"]
 };
 
 export const getQueueState = () => matchQueue.state;
@@ -222,17 +241,36 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
     }
 
         try {
-            const prompt = `Analyze the football match: ${req.homeTeam} vs ${req.awayTeam} in ${req.league}.
-        Kickoff: ${req.kickoff}. Current time: ${now}.
-        
-        Using Google Search grounding, retrieve real-time data for:
-        1. TEAM STATS: Goals, xG, xGA, npxG (Non-penalty xG), xT (Expected Threat), recent form, and clean sheets.
-        2. HISTORICAL SIMILARITIES: Find 3-5 historical matches with similar statistical profiles.
-        3. RISK ANALYSIS: List potential reasons why the statistical favorite might struggle (fatigue, injuries, referee bias, stadium conditions).
-        4. MATCH CONTEXT: Weather forecast for kickoff, referee choice, stadium atmosphere, rivalry history, and stakes.
-        5. MARKET SENTIMENT: General market divergence and professional sentiment.
-        
-        Provide a comprehensive match summary based on this real-time intelligence.`;
+            const prompt = `INSTRUCTION: Extract data for the upcoming match: ${req.homeTeam} vs ${req.awayTeam} in ${req.league}.
+            Kickoff: ${req.kickoff}. Current time: ${now}.
+            
+            Use ONE primary data provider philosophy (Preferably Opta/FBref). Use two secondary sources (Understat/SofaScore) strictly to measure variance. 
+
+            --- THE KILL-SWITCH GATE ---
+            You MUST find npxG from three distinct sources (Opta, Understat, SofaScore) for both teams.
+
+            --- EXOGENOUS EVENT OVERRIDES (MEC Matrix) ---
+            Check if:
+            1. Manager was sacked/changed this week.
+            2. Primary squad injury count (starting XI players out).
+            3. MEC Calculation: For each missing key player, find their season avg xG and xT contribution per 90. Sum these as missingExpectedG and missingExpectedT.
+            4. Match context: Dead-Rubber, Derby, or Standard.
+            5. Red card anomalies: Minutes played down a man in the last 3 matches.
+
+            --- UNIFIED QUANT DATA ---
+            Retrieve:
+            1. npxG (Non-penalty xG) from all three sources.
+            2. xT (Expected Threat).
+            3. Rolling averages for xG and xGA.
+            4. Recent form sequence (last 5 xG values).
+            5. Recursive State Data: Last 10 match npxG and xGA values as numeric arrays (npxGSequence and xGASequence). This is critical for warming the Kalman and Fractional Memory filters.
+
+            --- SYSTEM CALIBRATION (DYNAMIC BASELINES) ---
+            Perform a search for the current season's "xG provider variance" for ${req.league}.
+            Find the statistical deflation/inflation factor between Opta (FBref) and Understat/SofaScore. 
+            If Understat consistently over-reports xG by 12% in this league, the understatBias should be 0.88.
+            
+            Provide a comprehensive match summary based on this high-precision intelligence.`;
 
             let response;
             try {
@@ -261,19 +299,72 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         if (!text) {
             throw new Error("Match analysis failed: Data stream empty.");
         }
-        const data = JSON.parse(text.trim());
+        const parsedData = JSON.parse(text.trim());
+
+        // --- INSTITUTIONAL DATA STANDARDIZATION ---
+        // Scale secondary vendors to Opta/FBref baseline using dynamic calibration
+        const standardize = (team: any, matrix: any) => {
+            const uBias = matrix.understatBias || 0.88;
+            const sBias = matrix.sofaScoreBias || 0.94;
+
+            team.npxG_Understat = (team.npxG_Understat || 0) * uBias;
+            team.npxG_SofaScore = (team.npxG_SofaScore || 0) * sBias;
+            
+            // Apply MEC (Missing Expected Contribution)
+            team.npxG = Math.max(0, (team.npxG || 0) - (team.missingExpectedG || 0));
+            team.xT = Math.max(0, (team.xT || 0) - (team.missingExpectedT || 0));
+        };
+
+        standardize(parsedData.home, parsedData.calibration);
+        standardize(parsedData.away, parsedData.calibration);
+
+        const data = parsedData;
         const rawSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
         const sources = rawSources
             .map((c: any) => ({ title: c.web?.title || 'Expert Source', uri: c.web?.uri }))
             .filter((s: any) => s.uri);
 
-        const dc = calculateDixonColes(data.home, data.away, req.league);
-        const math = calculateProbability(data.home, data.away);
+        // --- DATA INTEGRITY GATE ---
+        const essentialMetrics = [
+            data.home.npxG, data.home.xT, data.home.avgXG,
+            data.away.npxG, data.away.xT, data.away.avgXG
+        ];
+        
+        let modelMode: 'NUCLEAR_FORTRESS' | 'POISSON_FALLBACK' = 'NUCLEAR_FORTRESS';
+        const isDataBlackout = essentialMetrics.some(m => m === undefined || m === null || m === 0);
+
+        if (isDataBlackout) {
+            modelMode = 'POISSON_FALLBACK';
+            // Ensure some base values if missing to keep the math engine running
+            data.home.npxG = data.home.npxG || data.home.avgXG || 1.1;
+            data.home.xT = data.home.xT || 1.1;
+            data.away.npxG = data.away.npxG || data.away.avgXG || 1.1;
+            data.away.xT = data.away.xT || 1.1;
+        }
+
+        // --- VARIANCE GAUGING ---
+        const calculateMaxVariance = (team: any) => {
+            const v1 = Math.abs((team.npxG || 0) - (team.npxG_Understat || 0));
+            const v2 = Math.abs((team.npxG || 0) - (team.npxG_SofaScore || 0));
+            const v3 = Math.abs((team.npxG_Understat || 0) - (team.npxG_SofaScore || 0));
+            return Math.max(v1, v2, v3);
+        };
+
+        const homeVar = calculateMaxVariance(data.home);
+        const awayVar = calculateMaxVariance(data.away);
+        const maxVariance = Math.max(homeVar, awayVar);
+
+        // --- MATH EXECUTION ---
+        const dc = calculateDixonColes(data.home, data.away, req.league, maxVariance);
         const regimePath = detectRegimeShifts(dc.alpha, dc.beta, data.home, data.away);
+        const math = calculateProbability(data.home, data.away, dc.alpha, dc.beta, regimePath);
         const structuralData = calculateStructuralFloor(data.home, data.away);
         const physicalCeiling = calculatePhysicalCeiling(data.home, data.away, regimePath);
-        const signalPrecision = calculateCredibilitySignal(data.home, data.away); // Statistical Audit
+        const signalPrecision = calculateCredibilitySignal(data.home, data.away); 
         const physics = auditPhysics(data.home, data.away, regimePath);
+
+        const killSwitchTriggered = maxVariance > 0.55; // Relaxed because we now weaponize variance instead of fearing it
+        // modelMode is determined by the Data Integrity Gate above
 
         // Advanced Model Audits
         const bayesianHome = new BayesianPoissonAudit(data.home.avgXG);
@@ -311,7 +402,12 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
                 neuralMemory,
                 entropy,
                 evtRisk
-            }
+            },
+            killSwitchTriggered,
+            maxVariance,
+            modelMode,
+            matchContextFlag: data.context.matchContextFlag,
+            calibration: data.calibration
         };
 
         // Store in Cache

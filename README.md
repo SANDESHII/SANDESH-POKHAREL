@@ -2,14 +2,14 @@
 <img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
 </div>
 
-# 📊 SANDESH-POKHAREL: AI-Powered Football Predictions
+# Run and deploy your AI Studio app
 
-Welcome to the ultimate workspace for football match analytics and predictions. This project combines advanced data tracking with a sleek, interactive terminal-style user interface, built entirely on top of TypeScript and Vite.
+This contains everything you need to run your app locally.
 
-[View Live App in AI Studio](https://ai.studio/apps/98831e9d-225e-4691-9ebf-6705c1011a39)
-## 🚀 Key Features
-* **Forensic Terminal UI:** A sleek, hacker-style interface for exploring data.
-* **AI Match Analytics:** Uses intelligence to analyze team performance and predict outcomes.
+View your app in AI Studio: https://ai.studio/apps/98831e9d-225e-4691-9ebf-6705c1011a39
+
+## Run Locally
+
 **Prerequisites:**  Node.js
 
 

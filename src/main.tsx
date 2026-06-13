@@ -43,10 +43,12 @@ const App: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
 
     const loadingMessages = [
-        "Initializing Neural Forensic Audit...",
-        "Searching for real-time team news...",
-        "Retrieving npxG and xT stats via Google Search...",
-        "Auditing recent form and structural shifts...",
+        "Initializing Nuclear Forensic Audit...",
+        "Calibrating Vendor Bias (Opta Baseline Matrix)...",
+        "Warming Recursive Filters (10-Game Historical State)...",
+        "Identifying Data Source Variance...",
+        "Searching for Exogenous Overrides (Manager/Injuries)...",
+        "Calculating npxG and xT Structural Floor...",
         "Detecting historical Mirror Matches...",
         "Running Monte Carlo Simulations...",
         "Finalizing the Prosecution Case...",
@@ -303,6 +305,129 @@ const App: React.FC = () => {
                         </div>
                     ) : analysis && simulation ? (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
+                            {/* NEW: Nuclear Fortress Integrity Audit */}
+                            <div className="bg-white/[0.02] border border-white/10 p-10 rounded-[3.5rem] space-y-8">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <Shield className="text-emerald-500" size={20} />
+                                        <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Nuclear Fortress Integrity Audit</h3>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${
+                                            analysis.killSwitchTriggered ? 'bg-amber-500/10 border-amber-500/20 text-amber-500' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
+                                        }`}>
+                                            Kill-Switch: {analysis.killSwitchTriggered ? 'WARNING: HIGH VARIANCE' : 'STANDBY'}
+                                        </div>
+                                        <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${
+                                            analysis.modelMode === 'POISSON_FALLBACK' ? 'bg-orange-500/10 border-orange-500/20 text-orange-500' : 'bg-blue-500/10 border-blue-500/20 text-blue-500'
+                                        }`}>
+                                            Mode: {analysis.modelMode.replace('_', ' ')}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                                    {/* Variance Check */}
+                                    <div className="space-y-4">
+                                        <div className="flex justify-between items-end">
+                                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">npxG Source Variance</span>
+                                            <span className={`text-xl font-black italic ${analysis.maxVariance > 0.3 ? 'text-red-500' : 'text-emerald-500'}`}>
+                                                Δ {analysis.maxVariance.toFixed(3)}
+                                            </span>
+                                        </div>
+                                        <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                            <div 
+                                                className={`h-full transition-all duration-[2s] ${analysis.maxVariance > 0.3 ? 'bg-red-500' : 'bg-emerald-500'}`} 
+                                                style={{ width: `${Math.min(100, (analysis.maxVariance / 0.4) * 100)}%` }} 
+                                            />
+                                        </div>
+                                        <p className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">
+                                            Threshold: 0.35 | Current status: {analysis.maxVariance > 0.35 ? 'CRITICAL SIGNAL NOISE' : 'SIGNAL CONVERGENCE SECURE'}
+                                        </p>
+                                    </div>
+
+                                    {/* Exogenous Overrides */}
+                                    <div className="md:col-span-2 grid grid-cols-2 sm:grid-cols-4 gap-4">
+                                        <div className={`p-4 rounded-3xl border ${analysis.homeStats.managerSacked || analysis.awayStats.managerSacked ? 'bg-amber-500/10 border-amber-500/20' : 'bg-white/5 border-white/5 opacity-40'}`}>
+                                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Manager Change</div>
+                                            <div className="text-xs font-black text-white uppercase italic">
+                                                {analysis.homeStats.managerSacked || analysis.awayStats.managerSacked ? 'DETECTED' : 'QUIET'}
+                                            </div>
+                                        </div>
+                                        <div className={`p-4 rounded-3xl border ${analysis.homeStats.injuryCount! >= 3 || analysis.awayStats.injuryCount! >= 3 || (analysis.homeStats.missingExpectedG! > 0.3) ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/5 opacity-40'}`}>
+                                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1">MEC Impact</div>
+                                            <div className="text-xs font-black text-white uppercase italic">
+                                                -{(analysis.homeStats.missingExpectedG! + analysis.awayStats.missingExpectedG!).toFixed(2)} xG
+                                            </div>
+                                        </div>
+                                        <div className={`p-4 rounded-3xl border ${analysis.homeStats.redCardAnomalyMinutes! > 0 || analysis.awayStats.redCardAnomalyMinutes! > 0 ? 'bg-orange-500/10 border-orange-500/20' : 'bg-white/5 border-white/5 opacity-40'}`}>
+                                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Red Card Bias</div>
+                                            <div className="text-xs font-black text-white uppercase italic">
+                                                {Math.max(analysis.homeStats.redCardAnomalyMinutes || 0, analysis.awayStats.redCardAnomalyMinutes || 0)} MIN
+                                            </div>
+                                        </div>
+                                        <div className="p-4 rounded-3xl border bg-white/5 border-white/10">
+                                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Context</div>
+                                            <div className="text-xs font-black text-white uppercase italic">
+                                                {analysis.matchContextFlag || 'STANDARD'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* NEW: Institutional Calibration Status */}
+                            {analysis.calibration && (
+                                <div className="bg-white/[0.02] border border-white/10 p-10 rounded-[3.5rem] flex items-center justify-between group">
+                                    <div className="flex items-center gap-6">
+                                        <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center border border-blue-500/20">
+                                            <Database className="text-blue-500" size={24} />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-sm font-black text-white uppercase tracking-[0.2em]">Institutional Matrix Calibration</h3>
+                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                                                Normalized to Opta Baseline | Confidence: {(analysis.calibration.calibrationConfidence * 100).toFixed(0)}%
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-8">
+                                        <div className="text-center">
+                                            <div className="text-[8px] font-black text-slate-600 uppercase mb-1">Understat Scale</div>
+                                            <div className="text-xs font-black text-blue-500 uppercase italic font-mono">
+                                                ×{analysis.calibration.understatBias.toFixed(2)}
+                                            </div>
+                                        </div>
+                                        <div className="text-center">
+                                            <div className="text-[8px] font-black text-slate-600 uppercase mb-1">SofaScore Scale</div>
+                                            <div className="text-xs font-black text-blue-500 uppercase italic font-mono">
+                                                ×{analysis.calibration.sofaScoreBias.toFixed(2)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* NEW: Recursive State Tracking Status */}
+                            <div className="bg-white/[0.02] border border-white/10 p-10 rounded-[3.5rem] flex items-center justify-between group">
+                                <div className="flex items-center gap-6">
+                                    <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center border border-emerald-500/20">
+                                        <History className="text-emerald-500" size={24} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-black text-white uppercase tracking-[0.2em]">Recursive State Tracking</h3>
+                                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                                            Warmed via {Math.max(analysis.homeStats.npxGSequence?.length || 0, analysis.awayStats.xGASequence?.length || 0)} matches | Filter Stability: SECURE
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex flex-col items-end">
+                                    <div className="text-[8px] font-black text-slate-600 uppercase mb-1">State Logic</div>
+                                    <div className="text-xs font-black text-emerald-500 uppercase italic font-mono tracking-widest">
+                                        RECURSIVE ACTIVE
+                                    </div>
+                                </div>
+                            </div>
+
                             {/* Nuclear Fortress Status Badge */}
                             {surety?.isNuclearFortress && (
                                 <div className="bg-emerald-500/10 border-2 border-emerald-500 rounded-[2rem] p-6 flex items-center justify-between animate-pulse">

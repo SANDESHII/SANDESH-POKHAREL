@@ -148,14 +148,15 @@ export const calculateEVTRisk = (home: TeamStats, away: TeamStats): number => {
  * 6. The Dixon-Coles Parameterization (MLE & Rho)
  * Refines the Alpha (Attack) and Beta (Defense) parameters using an iterative MLE loop.
  */
-export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: string = 'UNKNOWN') => {
+export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: string = 'UNKNOWN', maxVariance: number = 0.1) => {
     // 1. Calculate Dynamic d (League Inertia)
     const highInertiaLeagues = ['PREMIER LEAGUE', 'LA LIGA', 'BUNDESLIGA', 'SERIE A', 'LIGUE 1'];
     const dynamicD = highInertiaLeagues.some(l => league.toUpperCase().includes(l)) ? 0.6 : 0.3;
 
     // 2. Calculate Dynamic R (Measurement Noise)
-    const homeR = Math.max(0.05, Math.min(0.3, away.avgXGA / 10));
-    const awayR = Math.max(0.05, Math.min(0.3, home.avgXGA / 10));
+    // Weaponized Variance Gate: Inject maxVariance directly into measurement noise
+    const homeR = Math.max(0.05, Math.min(2.0, (away.avgXGA / 10) + (maxVariance * 1.5)));
+    const awayR = Math.max(0.05, Math.min(2.0, (home.avgXGA / 10) + (maxVariance * 1.5)));
 
     // 3. Initial State Estimation (Kalman + Neural Memory)
     const homeMemory = new NeuralMemoryBridge(home.npxG);
@@ -164,25 +165,56 @@ export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: st
     let alpha = homeKF_estimate(home, homeMemory, homeR);
     let beta = awayKF_estimate(away, awayMemory, awayR);
 
-    // 4. Forensic Convergence Loop (Newton-Raphson with Hessian)
+    // 4. Forensic Convergence Loop (Newton-Raphson with Bounded Backtracking)
     const epsilon = 1e-9;
     const maxIterations = 100;
     let delta = 1.0;
     let iterations = 0;
 
+    // Physical Parameter Bounds [Institutional Floor, Ceiling]
+    const minParam = 0.05;
+    const maxParam = 4.5;
+
+    // Likelihood function for backtracking: f(x) = k*ln(x) - x
+    const logLikelihood = (k: number, x: number) => k * Math.log(Math.max(1e-10, x)) - x;
+
     while (delta > epsilon && iterations < maxIterations) {
         const prevAlpha = alpha;
         const prevBeta = beta;
+        const currentL = logLikelihood(home.npxG, alpha) + logLikelihood(away.avgXGA, beta);
 
-        const gAlpha = (home.npxG / (alpha || 1)) - 1;
-        const gBeta = (away.avgXGA / (beta || 1)) - 1;
+        // Calculate Gradient/Hessian
+        const gAlpha = (home.npxG / Math.max(minParam, alpha)) - 1;
+        const gBeta = (away.avgXGA / Math.max(minParam, beta)) - 1;
 
-        const hAlpha = -home.npxG / (Math.pow(alpha, 2) || 1);
-        const hBeta = -away.avgXGA / (Math.pow(beta, 2) || 1);
+        const hAlpha = -home.npxG / Math.pow(Math.max(minParam, alpha), 2);
+        const hBeta = -away.avgXGA / Math.pow(Math.max(minParam, beta), 2);
 
-        alpha = alpha - (gAlpha / (hAlpha || -1)) * 0.5;
-        beta = beta - (gBeta / (hBeta || -1)) * 0.5;
+        // Attempt step with Dynamic Damping (Backtracking)
+        let stepSize = 1.0;
+        let success = false;
+        
+        while (stepSize > 0.01 && !success) {
+            let nextAlpha = alpha - (gAlpha / (hAlpha || -1)) * stepSize;
+            let nextBeta = beta - (gBeta / (hBeta || -1)) * stepSize;
 
+            // Physical Clamping
+            nextAlpha = Math.min(maxParam, Math.max(minParam, nextAlpha));
+            nextBeta = Math.min(maxParam, Math.max(minParam, nextBeta));
+
+            // Check for improvement in Likelihood (Armijo-style simplified)
+            const nextL = logLikelihood(home.npxG, nextAlpha) + logLikelihood(away.avgXGA, nextBeta);
+            
+            if (nextL >= currentL - 1e-5 || stepSize < 0.1) {
+                alpha = nextAlpha;
+                beta = nextBeta;
+                success = true;
+            } else {
+                stepSize *= 0.5; // Backtrack
+            }
+        }
+
+        // Global Normalization (Structural Coupling)
         const avgStrength = (alpha + beta) / 2;
         alpha = alpha / (avgStrength || 1.35);
         beta = beta / (avgStrength || 1.35);
@@ -190,11 +222,23 @@ export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: st
         delta = Math.abs(alpha - prevAlpha) + Math.abs(beta - prevBeta);
         iterations++;
     }
+
+    // 4.1 Solver Convergence Check
+    if (iterations === maxIterations && delta > 1e-3) {
+        // Log divergence for audit but allow fallback if needed, or throw if strict
+        console.warn(`SOLVER DIVERGENCE: Dixon-Coles loop failed to converge. Delta: ${delta}`);
+    }
     
-    // 5. Calibrated Rho (Low-Score Correlation Anchor)
-    const baseRho = (home.cleanSheets + away.cleanSheets) / 40;
-    const tacticalFriction = (home.avgXGA + away.avgXGA) / 4;
-    const rho = Math.min(0.25, Math.max(-0.1, baseRho - (tacticalFriction * 0.05)));
+    // 5. Calibrated Rho (Low-Score Dependence Kernel)
+    // Anchored to Parameter Convergence (alpha/beta) instead of trailing clean sheets (Double-Counting).
+    // Uses a hyperbolic tangent (tanh) to ensure smooth, non-linear asymptotic scaling.
+    const combinedExpectancy = (alpha + beta);
+    const expectationKernel = Math.tanh(1 / (combinedExpectancy + 0.5)); // Correlation peaks as goals vanish
+    
+    const tacticalFriction = Math.tanh((home.avgXGA + away.avgXGA) / 5); // Defensive resistance saturation
+    
+    // Rho scales smoothly: High dependency in low-block setups, vanishing in chaotic shootouts.
+    const rho = Math.min(0.25, Math.max(-0.1, (expectationKernel * 0.3) - (tacticalFriction * 0.1)));
     
     // 6. Execute Credibility Signal Audit (Layer 2)
     const credibilityScore = calculateCredibilitySignal(home, away);
@@ -202,15 +246,36 @@ export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: st
     return { alpha, beta, rho, credibilityScore };
 };
 
-// Helper for initial estimation
+// Helper for initial estimation with recursive state warming
 function homeKF_estimate(home: TeamStats, memory: NeuralMemoryBridge, r: number): number {
-    const kf = new KalmanFilter(memory.update(home.npxG));
-    return kf.update(home.npxG, r);
+    const sequence = home.npxGSequence && home.npxGSequence.length > 0 ? home.npxGSequence : [home.npxG];
+    
+    // 1. Initialize with earliest data point
+    const kf = new KalmanFilter(sequence[0]);
+    
+    // 2. Warm up through the historical sequence
+    for (let i = 1; i < sequence.length; i++) {
+        const memSignal = memory.update(sequence[i]);
+        kf.update(memSignal, r * 1.5); // Use slightly higher noise during historical warmup
+    }
+    
+    // 3. Final convergence with current npxG
+    const finalSignal = memory.update(home.npxG);
+    return kf.update(finalSignal, r);
 }
 
 function awayKF_estimate(away: TeamStats, memory: NeuralMemoryBridge, r: number): number {
-    const kf = new KalmanFilter(memory.update(away.npxG));
-    return kf.update(away.avgXGA, r);
+    const sequence = away.xGASequence && away.xGASequence.length > 0 ? away.xGASequence : [away.avgXGA];
+    
+    const kf = new KalmanFilter(sequence[0]);
+    
+    for (let i = 1; i < sequence.length; i++) {
+        const memSignal = memory.update(sequence[i]);
+        kf.update(memSignal, r * 1.5);
+    }
+    
+    const finalSignal = memory.update(away.avgXGA);
+    return kf.update(finalSignal, r);
 }
 /**
  * 7. Regime Change Detection (Optimal Partitioning)
@@ -219,40 +284,59 @@ function awayKF_estimate(away: TeamStats, memory: NeuralMemoryBridge, r: number)
  * Identifies tactical "Breakpoints" where the match physics shifts.
  */
 export const detectRegimeShifts = (alpha: number, beta: number, home: TeamStats, away: TeamStats, steps: number = 10): RegimeState[] => {
-    // 1. Generate Intensity Sequence (Momentum-Weighted Rolling xG)
+    // 1. Generate Stochastic Intensity Sequence
+    // Reacts to historical volatility (Shannon Entropy) instead of hardcoded sine waves.
     const intensitySequence: number[] = [];
-    const baseIntensity = (alpha + beta) * 35; // Calibrated base
-    const homeForm = home.form.reduce((sum, val) => sum + val, 0) / (home.form.length || 1);
-    const awayForm = away.form.reduce((sum, val) => sum + val, 0) / (away.form.length || 1);
-    const momentum = (homeForm + awayForm) / 2;
-
+    const baseIntensity = (alpha + beta) * 35;
+    
+    const homeEntropy = calculateShannonEntropy(home);
+    const awayEntropy = calculateShannonEntropy(away);
+    const volatilityKernel = (homeEntropy + awayEntropy) / 2; // Historical volatility driver
+    
+    let currentIntensity = baseIntensity;
+    const momentum = (home.form.reduce((a, b) => a + b, 0) + away.form.reduce((a, b) => a + b, 0)) / 10;
+    
     for (let t = 0; t < steps; t++) {
-        // We simulate a non-stationary drift in intensity
-        const drift = Math.sin(t / 2) * 5;
-        const decay = t > 7 ? -10 : 0; // Natural exhaustion late in match
-        intensitySequence.push(Math.max(20, Math.min(100, baseIntensity + (momentum * 2) + drift + decay)));
+        // Stochastic Walk with Momentum-Driven Drift
+        // Variance is scaled by the historical volatility kernel to ensure "Match DNA" integrity.
+        const structuralNoise = (Math.random() - 0.5) * 25 * volatilityKernel;
+        const exhaustionGate = t > 7 ? -(12 * (1 - volatilityKernel)) : 0;
+        
+        currentIntensity = Math.max(20, Math.min(100, currentIntensity + (momentum * 2) + structuralNoise + exhaustionGate));
+        intensitySequence.push(currentIntensity);
     }
 
-    // 2. Changepoint Detection (Greedy Cost Minimization)
-    // We segment the match into regimes where the variance is minimized.
-    const regimes: RegimeState[] = [];
-    const thresholds = {
-        SATURATED: 45,
-        FLUID: 65,
-        CHAOTIC: 85
-    };
+    // 2. Global Structural Smoothing (Changepoint Approximation)
+    // Removes local high-frequency noise to focus on structural tactical shifts.
+    const smoothedSequence = [...intensitySequence];
+    for (let i = 1; i < steps - 1; i++) {
+        smoothedSequence[i] = (intensitySequence[i-1] + intensitySequence[i] + intensitySequence[i+1]) / 3;
+    }
 
+    // 3. Continuous Regime Partitioning (Anti-Cliff Edge)
+    // Replaces rigid step-gates with probabilistic membership weights for boundary stability.
+    const regimes: RegimeState[] = [];
+    
     for (let t = 0; t < steps; t++) {
-        const val = intensitySequence[t];
-        let label: RegimeState['regime'] = 'LOW_INTENSITY';
+        const val = smoothedSequence[t];
         
-        if (val > thresholds.CHAOTIC) label = 'CHAOTIC_DECAY';
-        else if (val > thresholds.FLUID) label = 'FLUID_TRANSITION';
-        else if (val > thresholds.SATURATED) label = 'HIGH_SATURATION';
+        // Softmax-inspired membership weights for continuous transitions
+        const wChaotic = 1 / (1 + Math.exp(-(val - 82) / 3));
+        const wFluid = 1 / (1 + Math.exp(-(val - 62) / 3)) * (1 - wChaotic);
+        const wSaturated = 1 / (1 + Math.exp(-(val - 42) / 3)) * (1 - wFluid - wChaotic);
+        const wLow = 1 - wSaturated - wFluid - wChaotic;
+
+        // Select dominant regime based on membership strength
+        let label: RegimeState['regime'] = 'LOW_INTENSITY';
+        let maxWeight = wLow;
+
+        if (wChaotic > maxWeight) { label = 'CHAOTIC_DECAY'; maxWeight = wChaotic; }
+        else if (wFluid > maxWeight) { label = 'FLUID_TRANSITION'; maxWeight = wFluid; }
+        else if (wSaturated > maxWeight) { label = 'HIGH_SATURATION'; maxWeight = wSaturated; }
 
         regimes.push({
             regime: label,
-            confidence: 0.7 + (Math.abs(val - 50) / 100), // Distance from neutral increases confidence
+            confidence: Math.max(0.6, maxWeight), // Membership strength serves as precision metric
             intensity: val
         });
     }
@@ -347,8 +431,10 @@ export const calculateStructuralFloor = (home: TeamStats, away: TeamStats): { fl
     const floorMultiplier = 1.0 - frictionCoefficient;
 
     // 6. Apply the Calculated Floor (Nuclear Fortress: Anchor for Over 1.5)
-    // We add a specific booster if offensive mass is high and fragility exists
-    const fortressBooster = (offensiveMass > 2.5 && structuralFragility > 1.2) ? 0.35 : 0;
+    // Continuous Physics Law: Replace rigid step-gate with smooth mathematical slope
+    const massExcess = Math.max(0, offensiveMass - 2.2);
+    const fortressBooster = Math.min(0.45, massExcess * 0.15) + (structuralFragility > 1.2 ? 0.1 : 0);
+    
     const baseFloor = (offensiveMass * floorMultiplier * massMultiplier) + gridlockAdjustment + fortressBooster;
     
     // 7. The "Cushion" (Buffer for Over 1.5 Confidence)
@@ -368,42 +454,54 @@ export const calculatePhysicalCeiling = (home: TeamStats, away: TeamStats, regim
     const defensiveMass = (home.cleanSheets + away.cleanSheets) / 2;
     const avgIntensity = regimes.reduce((acc, r) => acc + r.intensity, 0) / regimes.length;
     
-    // Base ceiling is 3.5 goals.
-    // If defensive mass is high and intensity is low, the ceiling is pulled down.
-    // If chaotic regimes are present, it floats up.
-    const hasChaoticRegime = regimes.some(r => r.regime === 'CHAOTIC_DECAY');
-    const saturationDrag = (defensiveMass * 0.4) + (avgIntensity < 45 ? 0.5 : 0);
+    // Smoothly scale the ceiling based on tactical saturation.
+    // High Intensity + Low Defensive Mass = High Ceiling.
+    const intensityWeight = Math.tanh((avgIntensity - 50) / 20);
+    const massWeight = Math.tanh((defensiveMass - 1) / 2);
     
-    let ceiling = 3.5 + (hasChaoticRegime ? 1.0 : -saturationDrag);
+    // Ceiling starts at 3.5 and deviates based on the interaction.
+    let ceiling = 3.5 + (intensityWeight * 1.5) - (massWeight * 0.8);
     
-    // Limit ceiling between 2.5 and 5.5
-    return Math.min(5.5, Math.max(2.5, ceiling));
+    // Add a small "Chaos Premium" for frequent regime shifts
+    const regimeShifts = regimes.filter((r, i) => i > 0 && r.regime !== regimes[i-1].regime).length;
+    ceiling += (regimeShifts * 0.15);
+    
+    return Math.min(6.5, Math.max(2.0, ceiling));
 };
 
-export const calculateProbability = (home: TeamStats, away: TeamStats) => {
-    const homeXG = home.avgXG;
-    const awayXG = away.avgXG;
-    
-    // Weighted probability based on xG and form
-    const homeForm = home.form.reduce((a, b) => a + b, 0) / (home.form.length || 1);
-    const awayForm = away.form.reduce((a, b) => a + b, 0) / (away.form.length || 1);
-    
-    const homePower = homeXG * (1 + homeForm / 10);
-    const awayPower = awayXG * (1 + awayForm / 10);
+export const calculateProbability = (home: TeamStats, away: TeamStats, alpha: number, beta: number, regimes: RegimeState[]) => {
+    // 1. Dynamic Power Calculation (Using Kalman-Filtered Parameters)
+    // We anchor the probability to the structural alpha/beta instead of raw averages.
+    const homePower = alpha * (1 + (home.form.reduce((a, b) => a + b, 0) / 10));
+    const awayPower = beta * (1 + (away.form.reduce((a, b) => a + b, 0) / 10));
     
     const totalPower = homePower + awayPower;
-    const baseProb = totalPower > 0 ? (homePower / totalPower) * 100 : 50;
+    const rawBaseProb = totalPower > 0 ? (homePower / totalPower) : 0.5;
     
-    // DETERMINISTIC ENTROPY PENALTY (No Randomness)
-    // We tax the probability based on the entropy of the defenses.
-    const entropy = Math.abs(home.avgXGA - away.avgXGA);
-    const entropyPenalty = entropy * 2.5; // Increased from 2 to 2.5 for stricter pruning
+    // 2. Tactical Drift Integration (Regime Coupling)
+    // We adjust the base probability based on the projected match narrative.
+    const chaoticPressure = regimes.filter(r => r.regime === 'CHAOTIC_DECAY').length / regimes.length;
+    const saturationPressure = regimes.filter(r => r.regime === 'HIGH_SATURATION').length / regimes.length;
     
-    const probability = Math.min(94, Math.max(6, Math.round(baseProb - (entropyPenalty / 2)))); // Tightened bounds from 95/5 to 94/6
+    // Under high saturation, the advantage of the stronger team is suppressed (Regression to Mean).
+    // Under chaos, the advantage is amplified (Variance Exploitation).
+    const driftFactor = (chaoticPressure * 0.1) - (saturationPressure * 0.05);
+    const adjustedProb = rawBaseProb + (rawBaseProb * driftFactor);
+    
+    // 3. Mathematical Information Penalty (Uncertainty Transformation)
+    // Replaces the linear subtraction with an Exponential Decay Kernel.
+    // Instead of subtracting a flat %, we scale the precision of the result.
+    const entropy = Math.abs(alpha - beta); // Differential of expectations
+    const informationUncertainty = Math.exp(-entropy * 0.8); // High uncertainty as teams become identical
+    
+    // 4. Logit Compression (The Anti-Clamping Sigmoid)
+    // Instead of hard Math.min/max, we use a logistic curve to smoothly approach 0 and 100.
+    const logit = Math.log(Math.max(0.001, adjustedProb) / Math.max(0.001, 1 - adjustedProb));
+    const smoothedProb = 1 / (1 + Math.exp(-logit * (1 - (informationUncertainty * 0.2)))) * 100;
 
     return {
-        probability,
-        homeXG,
-        awayXG
+        probability: Math.round(smoothedProb),
+        homeXG: alpha,
+        awayXG: beta
     };
 };
