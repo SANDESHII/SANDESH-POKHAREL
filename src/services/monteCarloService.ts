@@ -63,11 +63,17 @@ export const runMonteCarloSimulation = (
     
     const noiseMultiplier = Math.max(0.5, 1.5 - confidenceVector);
     
+    let totalProbSum = 0;
+    let squaredProbSum = 0;
+    
     for (let i = 0; i < iterations; i++) {
         const randomFactor = (Math.random() * 0.12 - 0.06) * noiseMultiplier;
         const pathInfluence = path.reduce((acc, p) => acc + (p.confidence * p.intensity), 0) / (path.length * 100);
         const currentProb = (initialProb / 100 + randomFactor + pathInfluence);
         
+        totalProbSum += currentProb;
+        squaredProbSum += currentProb * currentProb;
+
         // Goal Simulation for Market Audit (Anchored to Fortress Floor)
         const homeLambda = (structuralFloor / 2) * (currentProb * 2);
         const awayLambda = (structuralFloor / 2) * ((1 - currentProb) * 2);
@@ -90,7 +96,10 @@ export const runMonteCarloSimulation = (
         if (totalGoals > 3) totalOver35 += weight;
     }
     
-    const divergence = 0; 
+    const meanProb = totalProbSum / iterations;
+    const variance = (squaredProbSum / iterations) - (meanProb * meanProb);
+    const sd = Math.sqrt(Math.max(0, variance));
+    const divergence = sd * 100; // Scaled for the Nuclear Fortress UI feedback loop
 
     // 2. STRESS TEST (Inversion Audit / Disaster Scenarios)
     let survivalCount = 0;
