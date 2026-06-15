@@ -254,8 +254,8 @@ export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: st
     
     const tacticalFriction = Math.tanh((home.avgXGA + away.avgXGA) / 5); // Defensive resistance saturation
     
-    // Rho scales smoothly: High dependency in low-block setups, vanishing in chaotic shootouts.
-    const rho = Math.min(0.25, Math.max(-0.1, (expectationKernel * 0.3) - (tacticalFriction * 0.1)));
+    // Rho scales smoothly: Negative values increase the probability of 0-0 and 1-1.
+    const rho = Math.min(0.1, Math.max(-0.25, (tacticalFriction * 0.1) - (expectationKernel * 0.35)));
     
     // 6. Execute Credibility Signal Audit (Layer 2)
     const credibilityScore = calculateCredibilitySignal(home, away);
@@ -499,9 +499,10 @@ export const calculateProbability = (home: TeamStats, away: TeamStats, alpha: nu
     const factorial = (n: number): number => n <= 1 ? 1 : n * factorial(n - 1);
 
     const getTau = (x: number, y: number, lambda: number, mu: number, r: number) => {
+        if (lambda === 0 || mu === 0) return 1;
         if (x === 0 && y === 0) return 1 - (lambda * mu * r);
-        if (x === 1 && y === 0) return 1 + (lambda * r);
-        if (x === 0 && y === 1) return 1 + (mu * r);
+        if (x === 1 && y === 0) return 1 + (mu * r);
+        if (x === 0 && y === 1) return 1 + (lambda * r);
         if (x === 1 && y === 1) return 1 - r;
         return 1;
     };

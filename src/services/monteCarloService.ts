@@ -53,10 +53,11 @@ export const runMonteCarloSimulation = (
 
     // Dixon-Coles Tau Adjustment Kernel
     const getTau = (x: number, y: number, lambda: number, mu: number, r: number) => {
+        if (lambda === 0 || mu === 0) return 1;
         if (x === 0 && y === 0) return 1 - (lambda * mu * r);
-        if (x === 1 && y === 0) return 1 + (lambda * r);
-        if (x === 0 && y === 1) return 1 + (mu * r);
+        if (x === 1 && y === 0) return 1 + (mu * r);
         if (x === 1 && y === 1) return 1 - r;
+        if (x === 0 && y === 1) return 1 + (lambda * r);
         return 1;
     };
     
