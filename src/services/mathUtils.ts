@@ -492,14 +492,38 @@ export const calculatePhysicalCeiling = (home: TeamStats, away: TeamStats, regim
     return Math.min(6.5, Math.max(2.0, ceiling));
 };
 
-export const calculateProbability = (home: TeamStats, away: TeamStats, alpha: number, beta: number, regimes: RegimeState[]) => {
-    // 1. Dynamic Power Calculation (Using Kalman-Filtered Parameters)
-    // We anchor the probability to the structural alpha/beta instead of raw averages.
-    const homePower = alpha * (1 + (home.form.reduce((a, b) => a + b, 0) / 10));
-    const awayPower = beta * (1 + (away.form.reduce((a, b) => a + b, 0) / 10));
-    
-    const totalPower = homePower + awayPower;
-    const rawBaseProb = totalPower > 0 ? (homePower / totalPower) : 0.5;
+export const calculateProbability = (home: TeamStats, away: TeamStats, alpha: number, beta: number, rho: number, regimes: RegimeState[]) => {
+    // 1. Dixon-Coles Adjustment Logic
+    // We calculate the joint probability of low scores and apply the tau adjustment kernel.
+    const poisson = (k: number, lambda: number) => (Math.pow(lambda, k) * Math.exp(-lambda)) / factorial(k);
+    const factorial = (n: number): number => n <= 1 ? 1 : n * factorial(n - 1);
+
+    const getTau = (x: number, y: number, lambda: number, mu: number, r: number) => {
+        if (x === 0 && y === 0) return 1 - (lambda * mu * r);
+        if (x === 1 && y === 0) return 1 + (lambda * r);
+        if (x === 0 && y === 1) return 1 + (mu * r);
+        if (x === 1 && y === 1) return 1 - r;
+        return 1;
+    };
+
+    let pHome = 0;
+    let pDraw = 0;
+    let pAway = 0;
+
+    // Sum probabilities up to 8 goals per team for high precision
+    for (let h = 0; h <= 8; h++) {
+        for (let a = 0; a <= 8; a++) {
+            const baseProb = poisson(h, alpha) * poisson(a, beta);
+            const adjProb = baseProb * getTau(h, a, alpha, beta, rho);
+
+            if (h > a) pHome += adjProb;
+            else if (h === a) pDraw += adjProb;
+            else pAway += adjProb;
+        }
+    }
+
+    // Normalized adjusted probability for the stronger team (Home focus here for consistent scaling)
+    const rawBaseProb = pHome / (pHome + pAway + 0.0001);
     
     // 2. Tactical Drift Integration (Regime Coupling)
     // We adjust the base probability based on the projected match narrative.

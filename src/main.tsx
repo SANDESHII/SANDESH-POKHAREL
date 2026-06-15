@@ -113,7 +113,8 @@ const App: React.FC = () => {
                 result.physicalCeiling,
                 result.homeStats.name,
                 result.awayStats.name,
-                result.context.confidenceVector
+                result.context.confidenceVector,
+                result.rho
             );
 
             // 3. Final Forensic Audit (Surety)

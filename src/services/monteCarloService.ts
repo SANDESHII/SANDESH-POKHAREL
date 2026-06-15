@@ -35,7 +35,8 @@ export const runMonteCarloSimulation = (
     physicalCeiling: number, // Added Physical Ceiling derived from mathUtils
     homeName: string,
     awayName: string,
-    confidenceVector: number = 0.85 // Default high confidence
+    confidenceVector: number = 0.85, // Default high confidence
+    rho: number = 0 // Dixon-Coles adjustment
 ): SimulationResult => {
     let homeOver05 = 0;
     let homeOver15 = 0;
@@ -44,16 +45,21 @@ export const runMonteCarloSimulation = (
     let totalOver05 = 0;
     let totalOver15 = 0;
     let totalOver25 = 0;
-    let totalOver35 = 0; // Added for Under 3.5 calculation
+    let totalOver35 = 0; 
     let totalGoalsSum = 0;
-    let maxGoalsObserved = 0;
+    let totalWeight = 0;
     
     const iterations = 15000; 
-    const goalDist: number[] = [];
 
-    // The Confidence Vector dynamically scales the randomness factor.
-    // Low confidence (e.g. 0.3) expands the noise range.
-    // High confidence (e.g. 0.9) tightens it.
+    // Dixon-Coles Tau Adjustment Kernel
+    const getTau = (x: number, y: number, lambda: number, mu: number, r: number) => {
+        if (x === 0 && y === 0) return 1 - (lambda * mu * r);
+        if (x === 1 && y === 0) return 1 + (lambda * r);
+        if (x === 0 && y === 1) return 1 + (mu * r);
+        if (x === 1 && y === 1) return 1 - r;
+        return 1;
+    };
+    
     const noiseMultiplier = Math.max(0.5, 1.5 - confidenceVector);
     
     for (let i = 0; i < iterations; i++) {
@@ -68,19 +74,19 @@ export const runMonteCarloSimulation = (
         const simHomeGoals = poissonRandom(homeLambda);
         const simAwayGoals = poissonRandom(awayLambda);
         const totalGoals = simHomeGoals + simAwayGoals;
-        
-        goalDist.push(totalGoals);
-        totalGoalsSum += totalGoals;
-        if (totalGoals > maxGoalsObserved) maxGoalsObserved = totalGoals;
+        const weight = getTau(simHomeGoals, simAwayGoals, homeLambda, awayLambda, rho);
 
-        if (simHomeGoals > 0) homeOver05++;
-        if (simHomeGoals > 1) homeOver15++;
-        if (simAwayGoals > 0) awayOver05++;
-        if (simAwayGoals > 1) awayOver15++;
-        if (totalGoals > 0) totalOver05++;
-        if (totalGoals > 1) totalOver15++;
-        if (totalGoals > 2) totalOver25++;
-        if (totalGoals > 3) totalOver35++;
+        totalWeight += weight;
+        totalGoalsSum += totalGoals * weight;
+
+        if (simHomeGoals > 0) homeOver05 += weight;
+        if (simHomeGoals > 1) homeOver15 += weight;
+        if (simAwayGoals > 0) awayOver05 += weight;
+        if (simAwayGoals > 1) awayOver15 += weight;
+        if (totalGoals > 0) totalOver05 += weight;
+        if (totalGoals > 1) totalOver15 += weight;
+        if (totalGoals > 2) totalOver25 += weight;
+        if (totalGoals > 3) totalOver35 += weight;
     }
     
     const divergence = 0; 
@@ -104,13 +110,13 @@ export const runMonteCarloSimulation = (
     }
     const survivalRating = (survivalCount / stressIterations) * 100;
 
-    // 3. Market Audits (Refocused on Fortress Objectives)
+    // 3. Market Audits (Weight-Adjusted Probabilities)
     const marketAudits: MarketAudit[] = [
-        { name: "TOTAL OVER 1.5", rawProb: (totalOver15 / iterations) * 100, regimeAlignment: 0, suretyScore: 0 },
-        { name: "TOTAL OVER 2.5", rawProb: (totalOver25 / iterations) * 100, regimeAlignment: 0, suretyScore: 0 },
-        { name: "TOTAL UNDER 3.5", rawProb: (1 - (totalOver35 / iterations)) * 100, regimeAlignment: 0, suretyScore: 0 },
-        { name: `${homeName} OVER 0.5`, rawProb: (homeOver05 / iterations) * 100, regimeAlignment: 0, suretyScore: 0 },
-        { name: `${awayName} OVER 0.5`, rawProb: (awayOver05 / iterations) * 100, regimeAlignment: 0, suretyScore: 0 },
+        { name: "TOTAL OVER 1.5", rawProb: (totalOver15 / totalWeight) * 100, regimeAlignment: 0, suretyScore: 0 },
+        { name: "TOTAL OVER 2.5", rawProb: (totalOver25 / totalWeight) * 100, regimeAlignment: 0, suretyScore: 0 },
+        { name: "TOTAL UNDER 3.5", rawProb: (1 - (totalOver35 / totalWeight)) * 100, regimeAlignment: 0, suretyScore: 0 },
+        { name: `${homeName} OVER 0.5`, rawProb: (homeOver05 / totalWeight) * 100, regimeAlignment: 0, suretyScore: 0 },
+        { name: `${awayName} OVER 0.5`, rawProb: (awayOver05 / totalWeight) * 100, regimeAlignment: 0, suretyScore: 0 },
     ];
 
     const structuralAudit: StructuralAudit = {

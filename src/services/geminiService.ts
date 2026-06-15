@@ -375,7 +375,7 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         // --- MATH EXECUTION ---
         const dc = calculateDixonColes(data.home, data.away, req.league, maxVariance, data.marketReality.marketMovementSignal);
         const regimePath = detectRegimeShifts(dc.alpha, dc.beta, data.home, data.away);
-        const math = calculateProbability(data.home, data.away, dc.alpha, dc.beta, regimePath);
+        const math = calculateProbability(data.home, data.away, dc.alpha, dc.beta, dc.rho, regimePath);
         const structuralData = calculateStructuralFloor(data.home, data.away);
         const physicalCeiling = calculatePhysicalCeiling(data.home, data.away, regimePath);
         const signalPrecision = calculateCredibilitySignal(data.home, data.away); 
@@ -404,6 +404,7 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             sources,
             homeXG: dc.alpha, // Using Kalman-filtered Alpha
             awayXG: dc.beta,  // Using Kalman-filtered Beta
+            rho: dc.rho,
             regimePath,
             structuralFloor: structuralData.floor,
             physicalCeiling,

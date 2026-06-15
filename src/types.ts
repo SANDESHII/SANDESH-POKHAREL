@@ -65,6 +65,7 @@ export interface AnalysisResult {
     sources: { title: string; uri: string }[];
     homeXG: number;
     awayXG: number;
+    rho: number;
     regimePath: RegimeState[];
     structuralFloor: number;
     physicalCeiling: number;
