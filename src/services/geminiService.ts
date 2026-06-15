@@ -17,7 +17,7 @@ import {
 import { AnalysisResult, MatchContext, MarketReality, MirrorMatch, ProsecutionCase, TeamStats, RegimeState } from "../types";
 import { IngestionService } from "./ingestionService";
 
-const MODEL_NAME = 'gemini-3-flash-preview'; 
+const MODEL_NAME = 'gemini-3.5-flash'; 
 const CACHE_FILE = path.join(process.cwd(), 'match_cache.json');
 
 // --- DURABLE CACHE (File-based Persistence) ---
@@ -87,15 +87,19 @@ class MatchQueue {
                         return;
                     } catch (err: any) {
                         const isRateLimit = err.message?.includes('429') || err.status === 429 || err.code === 429 || err.message?.includes('QUOTA');
+                        const isUnavailable = err.message?.includes('503') || err.status === 503 || err.code === 503 || err.message?.includes('UNAVAILABLE');
+                        
                         if (isRateLimit && useSearch) {
                             this.coolingDownUntil = Date.now() + 30000; // 30s pause for search
                             reject(new Error("SEARCH_LIMIT_HIT"));
                             return;
                         }
                         
-                        if (attempt < retries) {
+                        if ((isRateLimit || isUnavailable) && attempt < retries) {
                             attempt++;
-                            await new Promise(r => setTimeout(r, 2000 * attempt));
+                            // Exponential backoff for retries
+                            const backoff = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+                            await new Promise(r => setTimeout(r, backoff));
                             continue;
                         }
                         reject(err);
@@ -405,8 +409,14 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         return analysisResult;
     } catch (e: any) {
         console.error("Match Analysis Failed:", e);
-        if (e.message?.includes('QUOTA') || e.message?.includes('LIMIT') || e.message?.includes('HIT')) {
-            throw new Error("System is slightly congested. Retrying in 15 seconds...");
+        const isQuota = e.message?.includes('QUOTA') || e.message?.includes('LIMIT') || e.message?.includes('429');
+        const isUnavailable = e.message?.includes('503') || e.message?.includes('UNAVAILABLE') || e.message?.includes('demand');
+        
+        if (isQuota) {
+            throw new Error("System is slightly congested (Rate Limit). Retrying in 15 seconds...");
+        }
+        if (isUnavailable) {
+            throw new Error("Gemini is currently experiencing high demand. Please try again in a few moments.");
         }
         throw e;
     }
