@@ -112,7 +112,8 @@ const App: React.FC = () => {
                 result.structuralData.floor,
                 result.physicalCeiling,
                 result.homeStats.name,
-                result.awayStats.name
+                result.awayStats.name,
+                result.context.confidenceVector
             );
 
             // 3. Final Forensic Audit (Surety)
@@ -326,7 +327,7 @@ const App: React.FC = () => {
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
                                     {/* Variance Check */}
                                     <div className="space-y-4">
                                         <div className="flex justify-between items-end">
@@ -341,15 +342,28 @@ const App: React.FC = () => {
                                                 style={{ width: `${Math.min(100, (analysis.maxVariance / 0.4) * 100)}%` }} 
                                             />
                                         </div>
-                                        <p className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">
-                                            Threshold: 0.35 | Current status: {analysis.maxVariance > 0.35 ? 'CRITICAL SIGNAL NOISE' : 'SIGNAL CONVERGENCE SECURE'}
-                                        </p>
+                                    </div>
+
+                                    {/* Confidence Vector */}
+                                    <div className="space-y-4">
+                                        <div className="flex justify-between items-end">
+                                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Confidence Vector</span>
+                                            <span className={`text-xl font-black italic ${analysis.context.confidenceVector < 0.6 ? 'text-teal-400' : 'text-emerald-500'}`}>
+                                                {(analysis.context.confidenceVector * 100).toFixed(0)}%
+                                            </span>
+                                        </div>
+                                        <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                            <div 
+                                                className="h-full bg-teal-500 transition-all duration-[2s]" 
+                                                style={{ width: `${analysis.context.confidenceVector * 100}%` }} 
+                                            />
+                                        </div>
                                     </div>
 
                                     {/* Exogenous Overrides */}
-                                    <div className="md:col-span-2 grid grid-cols-2 sm:grid-cols-4 gap-4">
+                                    <div className="md:col-span-2 grid grid-cols-2 sm:grid-cols-3 gap-4">
                                         <div className={`p-4 rounded-3xl border ${analysis.homeStats.managerSacked || analysis.awayStats.managerSacked ? 'bg-amber-500/10 border-amber-500/20' : 'bg-white/5 border-white/5 opacity-40'}`}>
-                                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Manager Change</div>
+                                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1">MGR Change</div>
                                             <div className="text-xs font-black text-white uppercase italic">
                                                 {analysis.homeStats.managerSacked || analysis.awayStats.managerSacked ? 'DETECTED' : 'QUIET'}
                                             </div>
@@ -358,12 +372,6 @@ const App: React.FC = () => {
                                             <div className="text-[8px] font-black text-slate-500 uppercase mb-1">MEC Impact</div>
                                             <div className="text-xs font-black text-white uppercase italic">
                                                 -{(analysis.homeStats.missingExpectedG! + analysis.awayStats.missingExpectedG!).toFixed(2)} xG
-                                            </div>
-                                        </div>
-                                        <div className={`p-4 rounded-3xl border ${analysis.homeStats.redCardAnomalyMinutes! > 0 || analysis.awayStats.redCardAnomalyMinutes! > 0 ? 'bg-orange-500/10 border-orange-500/20' : 'bg-white/5 border-white/5 opacity-40'}`}>
-                                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Red Card Bias</div>
-                                            <div className="text-xs font-black text-white uppercase italic">
-                                                {Math.max(analysis.homeStats.redCardAnomalyMinutes || 0, analysis.awayStats.redCardAnomalyMinutes || 0)} MIN
                                             </div>
                                         </div>
                                         <div className="p-4 rounded-3xl border bg-white/5 border-white/10">
@@ -377,35 +385,54 @@ const App: React.FC = () => {
                             </div>
 
                             {/* NEW: Institutional Calibration Status */}
-                            {analysis.calibration && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                {analysis.calibration && (
+                                    <div className="bg-white/[0.02] border border-white/10 p-10 rounded-[3.5rem] flex items-center justify-between group">
+                                        <div className="flex items-center gap-6">
+                                            <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center border border-blue-500/20">
+                                                <Database className="text-blue-500" size={24} />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-sm font-black text-white uppercase tracking-[0.2em]">Matrix Calibration</h3>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-4">
+                                            <div className="text-center">
+                                                <div className="text-[8px] font-black text-slate-600 uppercase mb-1">Understat</div>
+                                                <div className="text-xs font-black text-blue-500 uppercase italic font-mono">
+                                                    ×{analysis.calibration.understatBias.toFixed(2)}
+                                                </div>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="text-[8px] font-black text-slate-600 uppercase mb-1">SofaScore</div>
+                                                <div className="text-xs font-black text-blue-500 uppercase italic font-mono">
+                                                    ×{analysis.calibration.sofaScoreBias.toFixed(2)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
                                 <div className="bg-white/[0.02] border border-white/10 p-10 rounded-[3.5rem] flex items-center justify-between group">
                                     <div className="flex items-center gap-6">
-                                        <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center border border-blue-500/20">
-                                            <Database className="text-blue-500" size={24} />
+                                        <div className="w-12 h-12 bg-purple-500/10 rounded-2xl flex items-center justify-center border border-purple-500/20">
+                                            <Shield className="text-purple-500" size={24} />
                                         </div>
                                         <div>
-                                            <h3 className="text-sm font-black text-white uppercase tracking-[0.2em]">Institutional Matrix Calibration</h3>
-                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                                                Normalized to Opta Baseline | Confidence: {(analysis.calibration.calibrationConfidence * 100).toFixed(0)}%
-                                            </p>
+                                            <h3 className="text-sm font-black text-white uppercase tracking-[0.2em]">Market Signal</h3>
                                         </div>
                                     </div>
-                                    <div className="flex gap-8">
-                                        <div className="text-center">
-                                            <div className="text-[8px] font-black text-slate-600 uppercase mb-1">Understat Scale</div>
-                                            <div className="text-xs font-black text-blue-500 uppercase italic font-mono">
-                                                ×{analysis.calibration.understatBias.toFixed(2)}
+                                    <div className="flex gap-4 items-center">
+                                        <div className="text-right">
+                                            <div className="text-[8px] font-black text-slate-600 uppercase mb-1">Movement</div>
+                                            <div className={`text-xs font-black uppercase italic ${analysis.marketReality.marketMovementSignal > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                                {analysis.marketReality.marketMovementSignal > 0 ? 'SUPPORTIVE' : 'DIVERGENT'}
                                             </div>
                                         </div>
-                                        <div className="text-center">
-                                            <div className="text-[8px] font-black text-slate-600 uppercase mb-1">SofaScore Scale</div>
-                                            <div className="text-xs font-black text-blue-500 uppercase italic font-mono">
-                                                ×{analysis.calibration.sofaScoreBias.toFixed(2)}
-                                            </div>
-                                        </div>
+                                        <div className={`w-3 h-3 rounded-full ${analysis.marketReality.marketMovementSignal > 0 ? 'bg-emerald-500' : 'bg-red-500'} animate-pulse`} />
                                     </div>
                                 </div>
-                            )}
+                            </div>
 
                             {/* NEW: Recursive State Tracking Status */}
                             <div className="bg-white/[0.02] border border-white/10 p-10 rounded-[3.5rem] flex items-center justify-between group">

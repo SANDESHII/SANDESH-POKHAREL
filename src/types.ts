@@ -33,6 +33,7 @@ export interface MatchContext {
     stadium: string;
     historicalRivalry: number;
     stakes: string;
+    confidenceVector: number; // 0 to 1: High value = stable environment, Low value = chaotic/high variance
 }
 
 export interface MarketReality {
@@ -40,6 +41,9 @@ export interface MarketReality {
     smartMoneyTarget: string;
     marketDivergence: number;
     sentimentScore: number;
+    openingOdds: { home: number, draw: number, away: number };
+    currentOdds: { home: number, draw: number, away: number };
+    marketMovementSignal: number; // -1 to 1: Positive means market agrees with model bias
 }
 
 export interface MirrorMatch {

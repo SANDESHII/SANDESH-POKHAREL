@@ -34,7 +34,8 @@ export const runMonteCarloSimulation = (
     structuralFloor: number,
     physicalCeiling: number, // Added Physical Ceiling derived from mathUtils
     homeName: string,
-    awayName: string
+    awayName: string,
+    confidenceVector: number = 0.85 // Default high confidence
 ): SimulationResult => {
     let homeOver05 = 0;
     let homeOver15 = 0;
@@ -49,9 +50,14 @@ export const runMonteCarloSimulation = (
     
     const iterations = 15000; 
     const goalDist: number[] = [];
+
+    // The Confidence Vector dynamically scales the randomness factor.
+    // Low confidence (e.g. 0.3) expands the noise range.
+    // High confidence (e.g. 0.9) tightens it.
+    const noiseMultiplier = Math.max(0.5, 1.5 - confidenceVector);
     
     for (let i = 0; i < iterations; i++) {
-        const randomFactor = Math.random() * 0.12 - 0.06; // Tightened noise further for the Fortress
+        const randomFactor = (Math.random() * 0.12 - 0.06) * noiseMultiplier;
         const pathInfluence = path.reduce((acc, p) => acc + (p.confidence * p.intensity), 0) / (path.length * 100);
         const currentProb = (initialProb / 100 + randomFactor + pathInfluence);
         

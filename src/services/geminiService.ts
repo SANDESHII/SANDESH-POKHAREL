@@ -180,14 +180,34 @@ const contextSchemaProperties = {
     stadium: { type: Type.STRING },
     historicalRivalry: { type: Type.NUMBER },
     stakes: { type: Type.STRING },
-    matchContextFlag: { type: Type.STRING, enum: ["Dead-Rubber", "Derby", "Standard"] }
+    matchContextFlag: { type: Type.STRING, enum: ["Dead-Rubber", "Derby", "Standard"] },
+    confidenceVector: { type: Type.NUMBER, description: "Confidence score based on lineup stability, manager drama, and tactics (1.0 = stable, <0.5 = chaotic)." }
 };
 
 const marketSchemaProperties = {
     syndicateFlow: { type: Type.STRING, enum: ["HIGH", "MEDIUM", "LOW"] },
     smartMoneyTarget: { type: Type.STRING },
     marketDivergence: { type: Type.NUMBER },
-    sentimentScore: { type: Type.NUMBER }
+    sentimentScore: { type: Type.NUMBER },
+    openingOdds: { 
+        type: Type.OBJECT, 
+        properties: { 
+            home: { type: Type.NUMBER }, 
+            draw: { type: Type.NUMBER }, 
+            away: { type: Type.NUMBER } 
+        },
+        required: ["home", "draw", "away"]
+    },
+    currentOdds: { 
+        type: Type.OBJECT, 
+        properties: { 
+            home: { type: Type.NUMBER }, 
+            draw: { type: Type.NUMBER }, 
+            away: { type: Type.NUMBER } 
+        },
+        required: ["home", "draw", "away"]
+    },
+    marketMovementSignal: { type: Type.NUMBER, description: "Derived signal from odds movement (-1 to 1)." }
 };
 
 const analysisSchema = {
@@ -275,6 +295,12 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             Find the statistical deflation/inflation factor between Opta (FBref) and Understat/SofaScore. 
             If Understat consistently over-reports xG by 12% in this league, the understatBias should be 0.88.
             
+            --- CONFIDENCE VECTOR ---
+            Evaluate match context (manager stability, lineup news, tactical disruption) and generate a confidenceVector from 0 to 1.
+            
+            --- MARKET DYNAMICS ---
+            Find opening odds vs current odds for the Match Result market. Calculate marketMovementSignal.
+
             Provide a comprehensive match summary based on this high-precision intelligence.`;
 
             let response;
@@ -347,7 +373,7 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         const maxVariance = Math.max(homeVar, awayVar);
 
         // --- MATH EXECUTION ---
-        const dc = calculateDixonColes(data.home, data.away, req.league, maxVariance);
+        const dc = calculateDixonColes(data.home, data.away, req.league, maxVariance, data.marketReality.marketMovementSignal);
         const regimePath = detectRegimeShifts(dc.alpha, dc.beta, data.home, data.away);
         const math = calculateProbability(data.home, data.away, dc.alpha, dc.beta, regimePath);
         const structuralData = calculateStructuralFloor(data.home, data.away);

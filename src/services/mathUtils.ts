@@ -1,8 +1,20 @@
 import { TeamStats, RegimeState } from '../types';
 
 /**
+ * 1. Time-Decay Weighting Function
+ * Applies e^(-lambda * t) to historical sequences to prioritize recent form.
+ */
+export const applyTimeDecay = (sequence: number[], lambda: number = 0.15): number[] => {
+    const len = sequence.length;
+    return sequence.map((val, i) => {
+        const t = len - 1 - i; // t=0 is most recent
+        const weight = Math.exp(-lambda * t);
+        return val * weight;
+    });
+};
+
+/**
  * 2. The Kalman Filter (Recursive State Estimator)
- * Separates the "True Signal" from "Measurement Noise"
  */
 export class KalmanFilter {
     private state: number;
@@ -148,21 +160,24 @@ export const calculateEVTRisk = (home: TeamStats, away: TeamStats): number => {
  * 6. The Dixon-Coles Parameterization (MLE & Rho)
  * Refines the Alpha (Attack) and Beta (Defense) parameters using an iterative MLE loop.
  */
-export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: string = 'UNKNOWN', maxVariance: number = 0.1) => {
+export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: string = 'UNKNOWN', maxVariance: number = 0.1, marketSignal: number = 0) => {
     // 1. Calculate Dynamic d (League Inertia)
     const highInertiaLeagues = ['PREMIER LEAGUE', 'LA LIGA', 'BUNDESLIGA', 'SERIE A', 'LIGUE 1'];
     const dynamicD = highInertiaLeagues.some(l => league.toUpperCase().includes(l)) ? 0.6 : 0.3;
 
-    // 2. Calculate Dynamic R (Measurement Noise)
-    // Directly weaponize the empirical variance from the institutional ingestion layer.
-    // Instead of a blind multiplier, R is anchored to the statistical discrepancy (Variance)
-    // and scaled by the baseline defensive expectation.
-    const homeR = Math.max(0.1, (away.avgXGA / 15) + maxVariance);
-    const awayR = Math.max(0.1, (home.avgXGA / 15) + maxVariance);
+    // 2. Market-Adjusted Confidence
+    // If marketSignal is positive, we reduce the noise (R), signaling higher certainty.
+    // If negative, we increase R to account for market skepticism.
+    const marketEffectHome = marketSignal > 0 ? 0.9 : 1.1;
+    const marketEffectAway = marketSignal > 0 ? 0.9 : 1.1;
 
-    // 3. Initial State Estimation (Kalman + Neural Memory)
+    // 3. Calculate Dynamic R (Measurement Noise)
+    const homeR = Math.max(0.05, ((away.avgXGA / 15) + maxVariance) * marketEffectHome);
+    const awayR = Math.max(0.05, ((home.avgXGA / 15) + maxVariance) * marketEffectAway);
+
+    // 4. Initial State Estimation (Kalman + Neural Memory with Time-Decay)
     const homeMemory = new NeuralMemoryBridge(home.npxG);
-    const awayMemory = new NeuralMemoryBridge(away.npxG);
+    const awayMemory = new NeuralMemoryBridge(away.avgXGA);
     
     let alpha = homeKF_estimate(home, homeMemory, homeR);
     let beta = awayKF_estimate(away, awayMemory, awayR);
@@ -250,7 +265,10 @@ export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: st
 
 // Helper for initial estimation with recursive state warming
 function homeKF_estimate(home: TeamStats, memory: NeuralMemoryBridge, r: number): number {
-    const sequence = home.npxGSequence && home.npxGSequence.length > 0 ? home.npxGSequence : [home.npxG];
+    let rawSequence = home.npxGSequence && home.npxGSequence.length > 0 ? home.npxGSequence : [home.npxG];
+    
+    // Apply Time-Decay Weighting to the sequence before filtering
+    const sequence = applyTimeDecay(rawSequence);
     
     // 1. Initialize with earliest data point
     const kf = new KalmanFilter(sequence[0]);
@@ -267,7 +285,10 @@ function homeKF_estimate(home: TeamStats, memory: NeuralMemoryBridge, r: number)
 }
 
 function awayKF_estimate(away: TeamStats, memory: NeuralMemoryBridge, r: number): number {
-    const sequence = away.xGASequence && away.xGASequence.length > 0 ? away.xGASequence : [away.avgXGA];
+    let rawSequence = away.xGASequence && away.xGASequence.length > 0 ? away.xGASequence : [away.avgXGA];
+    
+    // Apply Time-Decay Weighting
+    const sequence = applyTimeDecay(rawSequence);
     
     const kf = new KalmanFilter(sequence[0]);
     
