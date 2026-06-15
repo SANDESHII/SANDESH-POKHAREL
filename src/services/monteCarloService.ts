@@ -78,8 +78,18 @@ export const runMonteCarloSimulation = (
         const homeLambda = (structuralFloor / 2) * (currentProb * 2);
         const awayLambda = (structuralFloor / 2) * ((1 - currentProb) * 2);
         
-        const simHomeGoals = poissonRandom(homeLambda);
-        const simAwayGoals = poissonRandom(awayLambda);
+        const simHomeGoalsRaw = poissonRandom(homeLambda);
+        const simAwayGoalsRaw = poissonRandom(awayLambda);
+        
+        // Structural Anchor: Ensure simulated goals respect the Physical Ceiling
+        let simHomeGoals = simHomeGoalsRaw;
+        let simAwayGoals = simAwayGoalsRaw;
+        if (simHomeGoals + simAwayGoals > physicalCeiling) {
+            const ratio = physicalCeiling / (simHomeGoals + simAwayGoals);
+            simHomeGoals = Math.floor(simHomeGoals * ratio);
+            simAwayGoals = Math.floor(simAwayGoals * ratio);
+        }
+
         const totalGoals = simHomeGoals + simAwayGoals;
         const weight = getTau(simHomeGoals, simAwayGoals, homeLambda, awayLambda, rho);
 
@@ -111,8 +121,17 @@ export const runMonteCarloSimulation = (
         const sHomeLambda = (structuralFloor / 2) * (stressProb * 2);
         const sAwayLambda = (structuralFloor / 2) * ((1 - stressProb) * 2);
         
-        const sHomeGoals = poissonRandom(sHomeLambda);
-        const sAwayGoals = poissonRandom(sAwayLambda);
+        const sHomeGoalsRaw = poissonRandom(sHomeLambda);
+        const sAwayGoalsRaw = poissonRandom(sAwayLambda);
+        
+        let sHomeGoals = sHomeGoalsRaw;
+        let sAwayGoals = sAwayGoalsRaw;
+        if (sHomeGoals + sAwayGoals > physicalCeiling) {
+            const ratio = physicalCeiling / (sHomeGoals + sAwayGoals);
+            sHomeGoals = Math.floor(sHomeGoals * ratio);
+            sAwayGoals = Math.floor(sAwayGoals * ratio);
+        }
+
         const sTotal = sHomeGoals + sAwayGoals;
         
         // Fortress Survival: Match stays within the 1-4 goal corridor
@@ -120,14 +139,56 @@ export const runMonteCarloSimulation = (
     }
     const survivalRating = (survivalCount / stressIterations) * 100;
 
-    // 3. Market Audits (Weight-Adjusted Probabilities)
+    // 3. Market Audits (Weight-Adjusted Probabilities with Context Alignment)
+    const calculateAlignment = (marketName: string) => {
+        const isOver = marketName.includes('OVER') || marketName.includes('0.5');
+        const isUnder = marketName.includes('UNDER');
+        
+        const alignmentScore = path.reduce((acc, p) => {
+            let mult = 0;
+            if (p.regime === 'HIGH_SATURATION' || p.regime === 'CHAOTIC_DECAY') mult = isOver ? 1 : -0.8;
+            if (p.regime === 'LOW_INTENSITY') mult = isUnder ? 1 : -0.8;
+            if (p.regime === 'FLUID_TRANSITION') mult = 0.2;
+            return acc + (mult * (p.intensity / 100) * p.confidence);
+        }, 0);
+        
+        return Math.min(100, Math.max(0, 70 + (alignmentScore * 20)));
+    };
+
+    const baseSurety = Math.min(100, Math.max(0, (confidenceVector * 100) - (divergence * 0.8)));
+
     const marketAudits: MarketAudit[] = [
-        { name: "TOTAL OVER 1.5", rawProb: (totalOver15 / totalWeight) * 100, regimeAlignment: 0, suretyScore: 0 },
-        { name: "TOTAL OVER 2.5", rawProb: (totalOver25 / totalWeight) * 100, regimeAlignment: 0, suretyScore: 0 },
-        { name: "TOTAL UNDER 3.5", rawProb: (1 - (totalOver35 / totalWeight)) * 100, regimeAlignment: 0, suretyScore: 0 },
-        { name: `${homeName} OVER 0.5`, rawProb: (homeOver05 / totalWeight) * 100, regimeAlignment: 0, suretyScore: 0 },
-        { name: `${awayName} OVER 0.5`, rawProb: (awayOver05 / totalWeight) * 100, regimeAlignment: 0, suretyScore: 0 },
-    ];
+        { 
+            name: "TOTAL OVER 1.5", 
+            rawProb: (totalOver15 / totalWeight) * 100, 
+            regimeAlignment: calculateAlignment("TOTAL OVER 1.5"), 
+            suretyScore: baseSurety 
+        },
+        { 
+            name: "TOTAL OVER 2.5", 
+            rawProb: (totalOver25 / totalWeight) * 100, 
+            regimeAlignment: calculateAlignment("TOTAL OVER 2.5"), 
+            suretyScore: baseSurety * 0.9 
+        },
+        { 
+            name: "TOTAL UNDER 3.5", 
+            rawProb: (1 - (totalOver35 / totalWeight)) * 100, 
+            regimeAlignment: calculateAlignment("TOTAL UNDER 3.5"), 
+            suretyScore: baseSurety * 0.95 
+        },
+        { 
+            name: `${homeName} OVER 0.5`, 
+            rawProb: (homeOver05 / totalWeight) * 100, 
+            regimeAlignment: calculateAlignment("HOME OVER 0.5"), 
+            suretyScore: baseSurety * 1.1 
+        },
+        { 
+            name: `${awayName} OVER 0.5`, 
+            rawProb: (awayOver05 / totalWeight) * 100, 
+            regimeAlignment: calculateAlignment("AWAY OVER 0.5"), 
+            suretyScore: baseSurety * 1.1 
+        },
+    ].map(m => ({ ...m, suretyScore: Math.min(100, m.suretyScore) }));
 
     const structuralAudit: StructuralAudit = {
         totalGoalsFloor: structuralFloor > 1.8 ? "SECURE OVER 1.5" : (structuralFloor > 1.2 ? "OVER 1.5" : "OVER 0.5")
