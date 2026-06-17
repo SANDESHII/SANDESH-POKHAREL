@@ -1,5 +1,4 @@
 import { TeamStats } from '../types';
-import playerRegistry from '../data/playerRegistry.json';
 
 /**
  * INSTITUTIONAL DATA INGESTION SERVICE
@@ -30,19 +29,8 @@ export class IngestionService {
         const consensusNpxG = values[1]; // Median of 3 sources
 
         // 2. MEC (Missing Expected Contribution) Verification Loop
-        let missingG = team.missingExpectedG || 0;
-        let missingT = team.missingExpectedT || 0;
-
-        // Enrich MEC with player registry if names are provided
-        if (team.missingPlayersList && Array.isArray(team.missingPlayersList)) {
-            team.missingPlayersList.forEach((name: string) => {
-                const player = (playerRegistry as any).players.find((p: any) => p.name === name);
-                if (player) {
-                    if (player.role === 'ATT') missingG = Math.max(missingG, player.xG_per_90 || 0.3);
-                    if (player.role === 'DEF') missingT = Math.max(missingT, player.impact * 0.1 || 0.1);
-                }
-            });
-        }
+        const missingG = team.missingExpectedG || 0;
+        const missingT = team.missingExpectedT || 0;
 
         const finalNpxG = Math.min(6.0, Math.max(0.05, consensusNpxG - missingG));
         const finalXT = Math.min(5.0, Math.max(0.05, (team.xT || 0) - missingT));

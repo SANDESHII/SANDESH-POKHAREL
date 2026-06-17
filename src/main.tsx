@@ -190,7 +190,7 @@ const App: React.FC = () => {
                         <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,0.2)]">
                             <Activity className="text-black w-6 h-6" />
                         </div>
-                        <h1 className="text-xl font-black tracking-tighter uppercase italic leading-none">Match Report Pro</h1>
+                        <h1 className="text-xl font-black tracking-tighter uppercase italic leading-none">Match Fortress Pro</h1>
                     </div>
                 </div>
             </nav>
