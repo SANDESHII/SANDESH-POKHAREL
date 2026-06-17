@@ -15,10 +15,16 @@ export class IngestionService {
         const uBias = matrix?.understatBias || 0.88;
         const sBias = matrix?.sofaScoreBias || 0.94;
 
-        // 1. Multi-Source Consensus (MAD Filter)
-        const v1 = team.npxG || 0.1;
-        const v2 = (team.npxG_Understat || 0.1) * uBias;
-        const v3 = (team.npxG_SofaScore || 0.1) * sBias;
+        // 1. Multi-Source Consensus (MAD Filter) with Sanity Guards
+        // Filter out extreme outliers (e.g., > 6.0 xG) and non-numeric garbage
+        const parse = (v: any) => {
+            const num = typeof v === 'number' ? v : parseFloat(v);
+            return isNaN(num) ? 0.1 : Math.min(5.5, Math.max(0.01, num));
+        };
+
+        const v1 = parse(team.npxG);
+        const v2 = parse(team.npxG_Understat) * uBias;
+        const v3 = parse(team.npxG_SofaScore) * sBias;
 
         const values = [v1, v2, v3].sort((a, b) => a - b);
         const consensusNpxG = values[1]; // Median of 3 sources
@@ -38,8 +44,8 @@ export class IngestionService {
             });
         }
 
-        const finalNpxG = Math.max(0.05, consensusNpxG - missingG);
-        const finalXT = Math.max(0.05, (team.xT || 0) - missingT);
+        const finalNpxG = Math.min(6.0, Math.max(0.05, consensusNpxG - missingG));
+        const finalXT = Math.min(5.0, Math.max(0.05, (team.xT || 0) - missingT));
 
         // 3. Sequence Rehydration
         const rehydrate = (seq: number[] | undefined, fallback: number) => {

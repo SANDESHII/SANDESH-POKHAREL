@@ -248,8 +248,8 @@ export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: st
     
     // 5. MEC (Missing Expected Contribution) Adjustments
     // Subtract offensive impact from the team missing players, and add defensive penalty.
-    alpha = Math.max(0.1, alpha - (home.missingExpectedG || 0) + (away.missingExpectedT || 0));
-    beta = Math.max(0.1, beta - (away.missingExpectedG || 0) + (home.missingExpectedT || 0));
+    alpha = Math.max(0.1, Math.min(5.5, alpha - (home.missingExpectedG || 0) + (away.missingExpectedT || 0)));
+    beta = Math.max(0.1, Math.min(5.5, beta - (away.missingExpectedG || 0) + (home.missingExpectedT || 0)));
 
     // 6. Calibrated Rho (Low-Score Dependence Kernel)
     // Anchored to Parameter Convergence (alpha/beta) instead of trailing clean sheets (Double-Counting).
