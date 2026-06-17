@@ -12,7 +12,8 @@ import {
     BayesianPoissonAudit,
     runGradientBoostingAudit,
     calculateShannonEntropy,
-    calculateEVTRisk
+    calculateEVTRisk,
+    calibrateMatchParameters
 } from "./mathUtils";
 import { calculateDynamicRho, calculateMarketConfidence } from "./marketDataService";
 import { AnalysisResult, MatchContext, MarketReality, MirrorMatch, ProsecutionCase, TeamStats, RegimeState } from "../types";
@@ -173,7 +174,23 @@ const teamSchemaProperties = {
     missingExpectedT: { type: Type.NUMBER, description: "Sum of average xT contributions from confirmed out players" },
     missingPlayersList: { type: Type.ARRAY, items: { type: Type.STRING }, description: "List of names of starting XI players confirmed out" },
     npxGSequence: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "Last 10 match npxG values for recursive state warming" },
-    xGASequence: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "Last 10 match xGA values for recursive state warming" }
+    xGASequence: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "Last 10 match xGA values for recursive state warming" },
+    matchHistory: { 
+        type: Type.ARRAY, 
+        items: { 
+            type: Type.OBJECT,
+            properties: {
+                goalsScored: { type: Type.NUMBER },
+                goalsConceded: { type: Type.NUMBER },
+                xgScored: { type: Type.NUMBER },
+                xgConceded: { type: Type.NUMBER },
+                daysAgo: { type: Type.NUMBER },
+                isHome: { type: Type.BOOLEAN }
+            },
+            required: ["goalsScored", "goalsConceded", "xgScored", "xgConceded", "daysAgo", "isHome"]
+        },
+        description: "Recent match history for exponential time-decay calibration"
+    }
 };
 
 const contextSchemaProperties = {
@@ -272,6 +289,9 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             Kickoff: ${req.kickoff}. Current time: ${now}.
             
             Use ONE primary data provider philosophy (Preferably Opta/FBref). Use two secondary sources (Understat/SofaScore) strictly to measure variance. 
+
+            --- FRACTIONAL CALIBRATION ---
+            Find the last 10 matches for each team. Provide goals, xG, isHome, and daysAgo for each.
 
             --- THE KILL-SWITCH GATE ---
             You MUST find npxG from three distinct sources (Opta, Understat, SofaScore) for both teams.
@@ -403,7 +423,17 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         
         const math = calculateProbability(data.home, data.away, dc.alpha, dc.beta, finalRho, regimePath);
         const structuralData = calculateStructuralFloor(data.home, data.away);
-        const physicalCeiling = calculatePhysicalCeiling(data.home, data.away, regimePath);
+        const physicalCeilingRaw = calculatePhysicalCeiling(data.home, data.away, regimePath);
+        
+        let finalFloor = structuralData.floor;
+        let finalCeiling = physicalCeilingRaw;
+
+        if (data.home.matchHistory && data.away.matchHistory) {
+            const cal = calibrateMatchParameters(data.home.matchHistory, data.away.matchHistory);
+            finalFloor = (finalFloor * 0.3) + (cal.structuralFloor * 0.7);
+            finalCeiling = (finalCeiling * 0.3) + (cal.physicalCeiling * 0.7);
+        }
+
         const signalPrecision = calculateCredibilitySignal(data.home, data.away); 
         const physics = auditPhysics(data.home, data.away, regimePath);
 
@@ -432,8 +462,8 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             awayXG: dc.beta,  // Using Kalman-filtered Beta
             rho: finalRho,
             regimePath,
-            structuralFloor: structuralData.floor,
-            physicalCeiling,
+            structuralFloor: finalFloor,
+            physicalCeiling: finalCeiling,
             structuralData,
             signalPrecision,
             physics,

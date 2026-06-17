@@ -1,4 +1,4 @@
-import { TeamStats, RegimeState } from '../types';
+import { TeamStats, RegimeState, MatchHistoryItem } from '../types';
 
 /**
  * 1. Time-Decay Weighting Function
@@ -157,6 +157,78 @@ export const calculateEVTRisk = (home: TeamStats, away: TeamStats): number => {
 };
 
 /**
+ * Institutional Calibration Layer for xG Smoothing
+ * Optimized specifically for Over 1.5 and Under 3.5 precision using Exponential Time-Decay.
+ */
+export function calibrateMatchParameters(
+    homeHistory: MatchHistoryItem[],
+    awayHistory: MatchHistoryItem[],
+    leagueAverageGoals: number = 2.70
+): { homeLambda: number; awayMu: number; structuralFloor: number; physicalCeiling: number } {
+    const HALF_LIFE_DAYS = 30;
+    const decayConstant = Math.LN2 / HALF_LIFE_DAYS;
+
+    // 1. Home Team State Analysis
+    let totalHomeAttackWeight = 0;
+    let homeAttackXgSum = 0;
+    let totalHomeDefenseWeight = 0;
+    let homeDefenseXgSum = 0;
+
+    homeHistory.forEach(match => {
+        const weight = Math.exp(-decayConstant * (match.daysAgo || 0));
+        const locationModifier = match.isHome ? 1.15 : 0.85;
+        const finalizedWeight = weight * locationModifier;
+
+        homeAttackXgSum += (match.xgScored || 1.35) * finalizedWeight;
+        totalHomeAttackWeight += finalizedWeight;
+
+        homeDefenseXgSum += (match.xgConceded || 1.35) * finalizedWeight;
+        totalHomeDefenseWeight += finalizedWeight;
+    });
+
+    // 2. Away Team State Analysis
+    let totalAwayAttackWeight = 0;
+    let awayAttackXgSum = 0;
+    let totalAwayDefenseWeight = 0;
+    let awayDefenseXgSum = 0;
+
+    awayHistory.forEach(match => {
+        const weight = Math.exp(-decayConstant * (match.daysAgo || 0));
+        const locationModifier = !match.isHome ? 1.15 : 0.85;
+        const finalizedWeight = weight * locationModifier;
+
+        awayAttackXgSum += (match.xgScored || 1.15) * finalizedWeight;
+        totalAwayAttackWeight += finalizedWeight;
+
+        awayDefenseXgSum += (match.xgConceded || 1.55) * finalizedWeight;
+        totalAwayDefenseWeight += finalizedWeight;
+    });
+
+    const homeAttackInt = totalHomeAttackWeight > 0 ? (homeAttackXgSum / totalHomeAttackWeight) : 1.35;
+    const homeDefenseInt = totalHomeDefenseWeight > 0 ? (homeDefenseXgSum / totalHomeDefenseWeight) : 1.15;
+    const awayAttackInt = totalAwayAttackWeight > 0 ? (awayAttackXgSum / totalAwayAttackWeight) : 1.15;
+    const awayDefenseInt = totalAwayDefenseWeight > 0 ? (awayDefenseXgSum / totalAwayDefenseWeight) : 1.35;
+
+    // 3. Dynamic Opponent-Adjusted Scaling
+    // Home Advantage Factor is dampened by the strength of the away defense
+    const homeAdvFactor = 1.12 * (1 / (Math.max(0.7, awayDefenseInt) / 1.35));
+    
+    let hLambda = homeAttackInt * (awayDefenseInt / (leagueAverageGoals / 2)) * homeAdvFactor;
+    let aMu = awayAttackInt * (homeDefenseInt / (leagueAverageGoals / 2)) / homeAdvFactor;
+
+    const combinedXG = hLambda + aMu;
+    const structuralFloor = Math.max(0.6, Math.min(2.0, combinedXG * 0.62));
+    const physicalCeiling = Math.max(4.0, Math.ceil(combinedXG * 2.85));
+
+    return {
+        homeLambda: Math.max(0.2, Math.min(5.5, hLambda)),
+        awayMu: Math.max(0.2, Math.min(5.5, aMu)),
+        structuralFloor,
+        physicalCeiling
+    };
+}
+
+/**
  * 6. The Dixon-Coles Parameterization (MLE & Rho)
  * Refines the Alpha (Attack) and Beta (Defense) parameters using an iterative MLE loop.
  */
@@ -247,11 +319,17 @@ export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: st
     }
     
     // 5. MEC (Missing Expected Contribution) Adjustments
-    // Subtract offensive impact from the team missing players, and add defensive penalty.
     alpha = Math.max(0.1, Math.min(5.5, alpha - (home.missingExpectedG || 0) + (away.missingExpectedT || 0)));
     beta = Math.max(0.1, Math.min(5.5, beta - (away.missingExpectedG || 0) + (home.missingExpectedT || 0)));
 
-    // 6. Calibrated Rho (Low-Score Dependence Kernel)
+    // 6. Calibrated Parameters (Time-Decay Overlay)
+    if (home.matchHistory && away.matchHistory) {
+        const cal = calibrateMatchParameters(home.matchHistory, away.matchHistory);
+        alpha = (alpha * 0.4) + (cal.homeLambda * 0.6);
+        beta = (beta * 0.4) + (cal.awayMu * 0.6);
+    }
+    
+    // 7. Calibrated Rho (Low-Score Dependence Kernel)
     // Anchored to Parameter Convergence (alpha/beta) instead of trailing clean sheets (Double-Counting).
     // Uses a hyperbolic tangent (tanh) to ensure smooth, non-linear asymptotic scaling.
     const combinedExpectancy = (alpha + beta);

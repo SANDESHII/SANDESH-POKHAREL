@@ -1,4 +1,13 @@
 
+export interface MatchHistoryItem {
+    goalsScored: number;
+    goalsConceded: number;
+    xgScored: number;
+    xgConceded: number;
+    daysAgo: number;
+    isHome: boolean;
+}
+
 export interface TeamStats {
     name: string;
     goalsScored: number;
@@ -20,6 +29,7 @@ export interface TeamStats {
     missingPlayersList?: string[];
     npxGSequence?: number[];
     xGASequence?: number[];
+    matchHistory?: MatchHistoryItem[];
 }
 
 export interface RegimeState {
