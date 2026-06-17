@@ -487,7 +487,7 @@ export const calculateCredibilitySignal = (home: TeamStats, away: TeamStats): nu
  * 10. Purified Physics Audit (MET & Spatial Saturation)
  * Proves the "Possibility" of a goal is dead based on time, mass, and tactical friction.
  */
-export const auditPhysics = (home: TeamStats, away: TeamStats, path: RegimeState[]): { metAudit: boolean, saturation: number } => {
+export const auditPhysics = (home: TeamStats, away: TeamStats, path: RegimeState[]): { metAudit: boolean, saturation: number, integrityScore: number } => {
     // 1. Spatial Saturation (The Solid-State Defense)
     // Measures the "Defensive Mass" on the pitch. 
     // If saturation hits 1.0, the defense is a "Solid-State" with zero gaps.
@@ -507,7 +507,11 @@ export const auditPhysics = (home: TeamStats, away: TeamStats, path: RegimeState
     // We anchor the limit at 55 (Standard) + Tactical Drag.
     const metAudit = avgIntensity > (55 + tacticalDrag);
 
-    return { metAudit, saturation };
+    // 3. Integrity Score (Inverse of Saturation * Friction)
+    // Measures how "Clean" the match physics are. 1.0 is perfect mechanical flow.
+    const integrityScore = Math.max(0.1, 1.0 - (saturation * 0.4) - (Math.abs(home.npxG - away.avgXGA) * 0.1));
+
+    return { metAudit, saturation, integrityScore };
 };
 
 export const calculateStructuralFloor = (home: TeamStats, away: TeamStats): { floor: number, cushion: number } => {

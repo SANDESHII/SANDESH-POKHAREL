@@ -1,6 +1,6 @@
 
 import './index.css';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { 
     Activity, 
@@ -22,12 +22,15 @@ import {
     User,
     MapPin,
     Calendar,
-    History
+    History,
+    Dna,
+    Terminal,
+    Crosshair
 } from 'lucide-react';
-import { AnalysisResult } from './types';
+import { AnalysisResult, MatchHistoryItem } from './types';
 import { runMonteCarloSimulation, SimulationResult } from './services/monteCarloService';
 import { calculateMedallionSurety, MedallionResult } from './services/suretyService';
-import { calculateEVTRisk } from './services/mathUtils';
+import { calculateEVTRisk, calibrateMatchParameters } from './services/mathUtils';
 
 const App: React.FC = () => {
     const [homeInput, setHomeInput] = useState('');
@@ -35,8 +38,8 @@ const App: React.FC = () => {
     const [leagueInput, setLeagueInput] = useState('');
     const [timeInput, setTimeInput] = useState('');
     const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
-    const [simulation, setSimulation] = useState<SimulationResult | null>(null);
-    const [surety, setSurety] = useState<MedallionResult | null>(null);
+    const [userConfidence, setUserConfidence] = useState<number>(0.85);
+    const [terminalTab, setTerminalTab] = useState<'audit' | 'simulation' | 'market'>('audit');
     const [status, setStatus] = useState({ depth: 0, isCoolingDown: false, cooldownRemaining: 0 });
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
     const [loadingStage, setLoadingStage] = useState(0);
@@ -83,6 +86,50 @@ const App: React.FC = () => {
         return () => clearInterval(interval);
     }, [loadingAnalysis, status.isCoolingDown, status.depth]);
 
+    // 1. Memoized Calibration Layer
+    const calibratedData = useMemo(() => {
+        if (!analysis || !analysis.homeStats.matchHistory || !analysis.awayStats.matchHistory) return null;
+        return calibrateMatchParameters(analysis.homeStats.matchHistory, analysis.awayStats.matchHistory);
+    }, [analysis]);
+
+    // 2. Memoized Simulation Layer (Shield against re-renders)
+    const simulation = useMemo(() => {
+        if (!analysis) return null;
+        
+        // Use calibrated floor/ceiling if available, otherwise fallback to analysis defaults
+        const floor = calibratedData?.structuralFloor || analysis.structuralFloor || analysis.structuralData?.floor || 0.8;
+        const ceiling = calibratedData?.physicalCeiling || analysis.physicalCeiling || 6.0;
+
+        return runMonteCarloSimulation(
+            analysis.probability, 
+            analysis.regimePath, 
+            floor,
+            ceiling,
+            analysis.homeStats.name,
+            analysis.awayStats.name,
+            userConfidence,
+            analysis.rho
+        );
+    }, [analysis, calibratedData, userConfidence]);
+
+    // 3. Memoized Surety Audit
+    const surety = useMemo(() => {
+        if (!analysis || !simulation) return null;
+        return calculateMedallionSurety(
+            simulation, 
+            analysis.regimePath, 
+            analysis.structuralData, 
+            analysis.modelAudit.evtRisk, 
+            analysis.signalPrecision,
+            analysis.physics,
+            analysis.marketReality,
+            analysis.context,
+            analysis.mirrorMatches,
+            analysis.prosecution,
+            analysis.modelAudit
+        );
+    }, [analysis, simulation]);
+
     const handleAnalyze = async (game: { home: string; away: string; kickoff: string }) => {
         setLoadingAnalysis(true);
         setError(null);
@@ -105,36 +152,10 @@ const App: React.FC = () => {
 
             const result: AnalysisResult = await response.json();
             
-            // 2. Run Monte Carlo Simulation
-            const simRes = runMonteCarloSimulation(
-                result.probability, 
-                result.regimePath, 
-                result.structuralData.floor,
-                result.physicalCeiling,
-                result.homeStats.name,
-                result.awayStats.name,
-                result.context.confidenceVector,
-                result.rho
-            );
-
-            // 3. Final Forensic Audit (Surety)
-            const suretyRes = calculateMedallionSurety(
-                simRes, 
-                result.regimePath, 
-                result.structuralData, 
-                result.modelAudit.evtRisk, 
-                result.signalPrecision,
-                result.physics,
-                result.marketReality,
-                result.context,
-                result.mirrorMatches,
-                result.prosecution,
-                result.modelAudit
-            );
-            
             setAnalysis(result);
-            setSimulation(simRes);
-            setSurety(suretyRes);
+            if (result.context?.confidenceVector) {
+                setUserConfidence(result.context.confidenceVector);
+            }
         } catch (err: any) {
             console.error(err);
             setError(err.message || 'Analysis failed. Please check your connection.');
@@ -157,8 +178,6 @@ const App: React.FC = () => {
         setLeagueInput('');
         setTimeInput('');
         setAnalysis(null);
-        setSimulation(null);
-        setSurety(null);
         setError(null);
     };
 
@@ -308,81 +327,215 @@ const App: React.FC = () => {
                     ) : analysis && simulation ? (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
                             {/* NEW: Nuclear Fortress Integrity Audit */}
-                            <div className="bg-white/[0.02] border border-white/10 p-10 rounded-[3.5rem] space-y-8">
-                                <div className="flex items-center justify-between">
+                            <div className="bg-white/[0.02] border border-white/10 p-10 rounded-[3.5rem] space-y-10">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                                     <div className="flex items-center gap-3">
                                         <Shield className="text-emerald-500" size={20} />
-                                        <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Nuclear Fortress Integrity Audit</h3>
+                                        <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">Institutional Forensic Audit</h3>
                                     </div>
+                                    
+                                    {/* Terminal Tabs */}
+                                    <div className="flex bg-black/40 p-1.5 rounded-2xl border border-white/5">
+                                        <button 
+                                            onClick={() => setTerminalTab('audit')}
+                                            className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${terminalTab === 'audit' ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <Search size={14} /> Audit
+                                            </div>
+                                        </button>
+                                        <button 
+                                            onClick={() => setTerminalTab('simulation')}
+                                            className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${terminalTab === 'simulation' ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <Terminal size={14} /> Monte Carlo
+                                            </div>
+                                        </button>
+                                        <button 
+                                            onClick={() => setTerminalTab('market')}
+                                            className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${terminalTab === 'market' ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <BarChart3 size={14} /> Market
+                                            </div>
+                                        </button>
+                                    </div>
+
                                     <div className="flex gap-4">
                                         <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${
                                             analysis.killSwitchTriggered ? 'bg-amber-500/10 border-amber-500/20 text-amber-500' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
                                         }`}>
                                             Kill-Switch: {analysis.killSwitchTriggered ? 'WARNING: HIGH VARIANCE' : 'STANDBY'}
                                         </div>
-                                        <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${
-                                            analysis.modelMode === 'POISSON_FALLBACK' ? 'bg-orange-500/10 border-orange-500/20 text-orange-500' : 'bg-blue-500/10 border-blue-500/20 text-blue-500'
-                                        }`}>
-                                            Mode: {analysis.modelMode.replace('_', ' ')}
-                                        </div>
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-                                    {/* Variance Check */}
-                                    <div className="space-y-4">
-                                        <div className="flex justify-between items-end">
-                                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">npxG Source Variance</span>
-                                            <span className={`text-xl font-black italic ${analysis.maxVariance > 0.3 ? 'text-red-500' : 'text-emerald-500'}`}>
-                                                Δ {analysis.maxVariance.toFixed(3)}
-                                            </span>
+                                {/* Confidence Slider */}
+                                <div className="bg-black/20 border border-white/5 p-8 rounded-[2.5rem] space-y-6">
+                                    <div className="flex items-center justify-between">
+                                        <div className="space-y-1">
+                                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Confidence Vector</h4>
+                                            <p className="text-[8px] font-bold text-slate-600 uppercase tracking-widest">Adjust simulation reliability anchor</p>
                                         </div>
-                                        <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-                                            <div 
-                                                className={`h-full transition-all duration-[2s] ${analysis.maxVariance > 0.3 ? 'bg-red-500' : 'bg-emerald-500'}`} 
-                                                style={{ width: `${Math.min(100, (analysis.maxVariance / 0.4) * 100)}%` }} 
-                                            />
+                                        <div className="text-2xl font-black italic text-emerald-500">
+                                            {(userConfidence * 100).toFixed(0)}%
                                         </div>
                                     </div>
-
-                                    {/* Confidence Vector */}
-                                    <div className="space-y-4">
-                                        <div className="flex justify-between items-end">
-                                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Confidence Vector</span>
-                                            <span className={`text-xl font-black italic ${analysis.context.confidenceVector < 0.6 ? 'text-teal-400' : 'text-emerald-500'}`}>
-                                                {(analysis.context.confidenceVector * 100).toFixed(0)}%
-                                            </span>
-                                        </div>
-                                        <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-                                            <div 
-                                                className="h-full bg-teal-500 transition-all duration-[2s]" 
-                                                style={{ width: `${analysis.context.confidenceVector * 100}%` }} 
-                                            />
-                                        </div>
-                                    </div>
-
-                                    {/* Exogenous Overrides */}
-                                    <div className="md:col-span-2 grid grid-cols-2 sm:grid-cols-3 gap-4">
-                                        <div className={`p-4 rounded-3xl border ${analysis.homeStats.managerSacked || analysis.awayStats.managerSacked ? 'bg-amber-500/10 border-amber-500/20' : 'bg-white/5 border-white/5 opacity-40'}`}>
-                                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1">MGR Change</div>
-                                            <div className="text-xs font-black text-white uppercase italic">
-                                                {analysis.homeStats.managerSacked || analysis.awayStats.managerSacked ? 'DETECTED' : 'QUIET'}
-                                            </div>
-                                        </div>
-                                        <div className={`p-4 rounded-3xl border ${analysis.homeStats.injuryCount! >= 3 || analysis.awayStats.injuryCount! >= 3 || (analysis.homeStats.missingExpectedG! > 0.3) ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/5 opacity-40'}`}>
-                                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1">MEC Impact</div>
-                                            <div className="text-xs font-black text-white uppercase italic">
-                                                -{(analysis.homeStats.missingExpectedG! + analysis.awayStats.missingExpectedG!).toFixed(2)} xG
-                                            </div>
-                                        </div>
-                                        <div className="p-4 rounded-3xl border bg-white/5 border-white/10">
-                                            <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Context</div>
-                                            <div className="text-xs font-black text-white uppercase italic">
-                                                {analysis.matchContextFlag || 'STANDARD'}
-                                            </div>
-                                        </div>
+                                    <input 
+                                        type="range" 
+                                        min="0.10" 
+                                        max="1.00" 
+                                        step="0.01" 
+                                        value={userConfidence} 
+                                        onChange={(e) => setUserConfidence(parseFloat(e.target.value))}
+                                        className="w-full h-1.5 bg-white/5 rounded-full appearance-none cursor-pointer accent-emerald-500"
+                                    />
+                                    <div className="flex justify-between text-[8px] font-black text-slate-700 uppercase tracking-widest">
+                                        <span>VOLATILE</span>
+                                        <span>INSTITUTIONAL STANDARD</span>
+                                        <span>ABSOLUTE CERTAINTY</span>
                                     </div>
                                 </div>
+
+                                {terminalTab === 'audit' && (
+                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-8 animate-in fade-in zoom-in-95 duration-500">
+                                        {/* Variance Check */}
+                                        <div className="space-y-4">
+                                            <div className="flex justify-between items-end">
+                                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">npxG Source Variance</span>
+                                                <span className={`text-xl font-black italic ${analysis.maxVariance > 0.3 ? 'text-red-500' : 'text-emerald-500'}`}>
+                                                    Δ {analysis.maxVariance.toFixed(3)}
+                                                </span>
+                                            </div>
+                                            <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                                <div 
+                                                    className={`h-full transition-all duration-700 ${analysis.maxVariance > 0.3 ? 'bg-red-500' : 'bg-emerald-500'}`} 
+                                                    style={{ width: `${Math.min(100, (analysis.maxVariance / 0.4) * 100)}%` }} 
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Reliability Anchor */}
+                                        <div className="space-y-4">
+                                            <div className="flex justify-between items-end">
+                                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Physics Integrity</span>
+                                                <span className="text-xl font-black italic text-emerald-500">
+                                                    {(analysis.physics.integrityScore * 100).toFixed(0)}%
+                                                </span>
+                                            </div>
+                                            <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                                <div 
+                                                    className="h-full bg-emerald-500 transition-all duration-1000" 
+                                                    style={{ width: `${analysis.physics.integrityScore * 100}%` }} 
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Exogenous Overrides */}
+                                        <div className="md:col-span-2 grid grid-cols-3 gap-4">
+                                            <div className={`p-4 rounded-3xl border ${analysis.homeStats.managerSacked || analysis.awayStats.managerSacked ? 'bg-amber-500/10 border-amber-500/20' : 'bg-white/5 border-white/5 opacity-40'}`}>
+                                                <div className="text-[8px] font-black text-slate-500 uppercase mb-1">MGR Change</div>
+                                                <div className="text-xs font-black text-white uppercase italic text-center text-emerald-400">
+                                                    {analysis.homeStats.managerSacked || analysis.awayStats.managerSacked ? 'DETECTED' : 'STABLE'}
+                                                </div>
+                                            </div>
+                                            <div className={`p-4 rounded-3xl border ${analysis.homeStats.injuryCount! >= 3 || (analysis.homeStats.missingExpectedG! > 0.3) ? 'bg-red-500/10 border-red-500/20' : 'bg-white/5 border-white/5 opacity-40'}`}>
+                                                <div className="text-[8px] font-black text-slate-500 uppercase mb-1">MEC Impact</div>
+                                                <div className="text-xs font-black text-white uppercase italic text-center text-red-400">
+                                                    -{(analysis.homeStats.missingExpectedG! + analysis.awayStats.missingExpectedG!).toFixed(2)} xG
+                                                </div>
+                                            </div>
+                                            <div className="p-4 rounded-3xl border bg-white/5 border-white/10">
+                                                <div className="text-[8px] font-black text-slate-500 uppercase mb-1">Context</div>
+                                                <div className="text-xs font-black text-white uppercase italic text-center text-blue-500">
+                                                    {analysis.matchContextFlag || 'STANDARD'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {terminalTab === 'simulation' && simulation && (
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8 animate-in fade-in slide-in-from-right-4 duration-500">
+                                        <div className="space-y-2 p-6 bg-black/40 rounded-3xl border border-white/5">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <Target size={14} className="text-emerald-500" />
+                                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Monte Carlo Expectancy</span>
+                                            </div>
+                                            <div className="text-4xl font-black italic text-white leading-none">
+                                                {(simulation.homeExpectedGoals + simulation.awayExpectedGoals).toFixed(2)}
+                                                <span className="text-sm font-bold text-slate-600 ml-2 uppercase tracking-tighter not-italic">xG</span>
+                                            </div>
+                                            <p className="text-[8px] font-bold text-slate-600 uppercase tracking-widest">Derived from 17,500 iterations</p>
+                                        </div>
+
+                                        <div className="space-y-6">
+                                            <div className="flex justify-between items-center group">
+                                                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Home Win Prob</div>
+                                                <div className="text-xl font-black italic text-white">{(simulation.homeWinProb * 100).toFixed(1)}%</div>
+                                            </div>
+                                            <div className="flex justify-between items-center group">
+                                                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Draw Prob</div>
+                                                <div className="text-xl font-black italic text-white">{(simulation.drawProb * 100).toFixed(1)}%</div>
+                                            </div>
+                                            <div className="flex justify-between items-center group">
+                                                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Away Win Prob</div>
+                                                <div className="text-xl font-black italic text-white">{(simulation.awayWinProb * 100).toFixed(1)}%</div>
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-emerald-500/5 p-6 rounded-3xl border border-emerald-500/20 flex flex-col justify-center text-center">
+                                            <div className="text-[8px] font-black text-emerald-500/60 uppercase tracking-[0.2em] mb-2">Simulation Survival</div>
+                                            <div className="text-4xl font-black italic text-emerald-500 leading-none mb-1">
+                                                {simulation.survivalRating.toFixed(1)}%
+                                            </div>
+                                            <div className="text-[10px] font-bold text-emerald-400/40 uppercase tracking-widest">Corridor Stability</div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {terminalTab === 'market' && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-12 animate-in fade-in slide-in-from-left-4 duration-500">
+                                        <div className="space-y-6">
+                                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Institutional Divergence</h4>
+                                            <div className="grid grid-cols-3 gap-6">
+                                                <div className="space-y-1">
+                                                    <div className="text-[8px] font-bold text-slate-600 uppercase">Opening</div>
+                                                    <div className="text-xl font-black italic text-white">{analysis.marketReality.openingOdds.home.toFixed(2)}</div>
+                                                </div>
+                                                <div className="flex items-center justify-center">
+                                                    <ArrowRight className="text-white/10" />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <div className="text-[8px] font-bold text-slate-600 uppercase">Current</div>
+                                                    <div className={`text-xl font-black italic ${analysis.marketReality.currentOdds.home < analysis.marketReality.openingOdds.home ? 'text-emerald-500' : 'text-red-500'}`}>
+                                                        {analysis.marketReality.currentOdds.home.toFixed(2)}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-6">
+                                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Syndicate Flow Target</h4>
+                                            <div className="p-6 bg-purple-500/10 border border-purple-500/20 rounded-3xl flex items-center justify-between">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="w-10 h-10 bg-purple-500 rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(168,85,247,0.3)]">
+                                                        <Activity className="text-black" size={18} />
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-[8px] font-black text-purple-400 uppercase tracking-widest">Primary Target</div>
+                                                        <div className="text-lg font-black text-white uppercase italic">{analysis.marketReality.smartMoneyTarget}</div>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="text-[8px] font-black text-purple-500 uppercase tracking-widest">Flow Intensity</div>
+                                                    <div className="text-lg font-black text-white italic">{analysis.marketReality.syndicateFlow}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             {/* NEW: Institutional Calibration Status */}

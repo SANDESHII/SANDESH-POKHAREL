@@ -82,7 +82,7 @@ export interface AnalysisResult {
     physicalCeiling: number;
     structuralData: { floor: number, cushion: number };
     signalPrecision: number;
-    physics: { metAudit: boolean, saturation: number };
+    physics: { metAudit: boolean, saturation: number, integrityScore: number };
     context: MatchContext;
     marketReality: MarketReality;
     mirrorMatches: MirrorMatch[];
