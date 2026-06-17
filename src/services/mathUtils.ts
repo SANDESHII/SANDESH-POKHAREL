@@ -246,7 +246,12 @@ export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: st
         console.warn(`SOLVER DIVERGENCE: Dixon-Coles loop failed to converge. Delta: ${delta}`);
     }
     
-    // 5. Calibrated Rho (Low-Score Dependence Kernel)
+    // 5. MEC (Missing Expected Contribution) Adjustments
+    // Subtract offensive impact from the team missing players, and add defensive penalty.
+    alpha = Math.max(0.1, alpha - (home.missingExpectedG || 0) + (away.missingExpectedT || 0));
+    beta = Math.max(0.1, beta - (away.missingExpectedG || 0) + (home.missingExpectedT || 0));
+
+    // 6. Calibrated Rho (Low-Score Dependence Kernel)
     // Anchored to Parameter Convergence (alpha/beta) instead of trailing clean sheets (Double-Counting).
     // Uses a hyperbolic tangent (tanh) to ensure smooth, non-linear asymptotic scaling.
     const combinedExpectancy = (alpha + beta);

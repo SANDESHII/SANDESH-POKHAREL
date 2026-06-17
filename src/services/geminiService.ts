@@ -14,10 +14,11 @@ import {
     calculateShannonEntropy,
     calculateEVTRisk
 } from "./mathUtils";
+import { calculateDynamicRho, calculateMarketConfidence } from "./marketDataService";
 import { AnalysisResult, MatchContext, MarketReality, MirrorMatch, ProsecutionCase, TeamStats, RegimeState } from "../types";
 import { IngestionService } from "./ingestionService";
 
-const MODEL_NAME = 'gemini-3.5-flash'; 
+const MODEL_NAME = 'gemini-2.0-flash'; 
 const CACHE_FILE = path.join(process.cwd(), 'match_cache.json');
 
 // --- DURABLE CACHE (File-based Persistence) ---
@@ -170,6 +171,7 @@ const teamSchemaProperties = {
     injuryCount: { type: Type.NUMBER, description: "Number of starting XI players confirmed out" },
     missingExpectedG: { type: Type.NUMBER, description: "Sum of average xG contributions from confirmed out players" },
     missingExpectedT: { type: Type.NUMBER, description: "Sum of average xT contributions from confirmed out players" },
+    missingPlayersList: { type: Type.ARRAY, items: { type: Type.STRING }, description: "List of names of starting XI players confirmed out" },
     npxGSequence: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "Last 10 match npxG values for recursive state warming" },
     xGASequence: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "Last 10 match xGA values for recursive state warming" }
 };
@@ -373,9 +375,33 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         const maxVariance = Math.max(homeVar, awayVar);
 
         // --- MATH EXECUTION ---
+        const marketRho = calculateDynamicRho({
+            openingDraw: data.marketReality.openingOdds.draw,
+            currentDraw: data.marketReality.currentOdds.draw,
+            openingHome: data.marketReality.openingOdds.home,
+            currentHome: data.marketReality.currentOdds.home,
+            openingAway: data.marketReality.openingOdds.away,
+            currentAway: data.marketReality.currentOdds.away
+        });
+        
+        const marketConfidenceAdj = calculateMarketConfidence({
+            openingDraw: data.marketReality.openingOdds.draw,
+            currentDraw: data.marketReality.currentOdds.draw,
+            openingHome: data.marketReality.openingOdds.home,
+            currentHome: data.marketReality.currentOdds.home,
+            openingAway: data.marketReality.openingOdds.away,
+            currentAway: data.marketReality.currentOdds.away
+        });
+
+        const refinedConfidence = Math.min(data.context.confidenceVector, marketConfidenceAdj);
+
         const dc = calculateDixonColes(data.home, data.away, req.league, maxVariance, data.marketReality.marketMovementSignal);
         const regimePath = detectRegimeShifts(dc.alpha, dc.beta, data.home, data.away);
-        const math = calculateProbability(data.home, data.away, dc.alpha, dc.beta, dc.rho, regimePath);
+        
+        // Use the better Rho from Market Reality
+        const finalRho = (marketRho + dc.rho) / 2;
+        
+        const math = calculateProbability(data.home, data.away, dc.alpha, dc.beta, finalRho, regimePath);
         const structuralData = calculateStructuralFloor(data.home, data.away);
         const physicalCeiling = calculatePhysicalCeiling(data.home, data.away, regimePath);
         const signalPrecision = calculateCredibilitySignal(data.home, data.away); 
@@ -404,14 +430,14 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             sources,
             homeXG: dc.alpha, // Using Kalman-filtered Alpha
             awayXG: dc.beta,  // Using Kalman-filtered Beta
-            rho: dc.rho,
+            rho: finalRho,
             regimePath,
             structuralFloor: structuralData.floor,
             physicalCeiling,
             structuralData,
             signalPrecision,
             physics,
-            context: data.context,
+            context: { ...data.context, confidenceVector: refinedConfidence },
             marketReality: data.marketReality,
             mirrorMatches: data.mirrorMatches,
             prosecution: data.prosecution,

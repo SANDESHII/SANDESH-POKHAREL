@@ -17,6 +17,7 @@ export interface TeamStats {
     injuryCount?: number;
     missingExpectedG?: number;
     missingExpectedT?: number;
+    missingPlayersList?: string[];
     npxGSequence?: number[];
     xGASequence?: number[];
 }
