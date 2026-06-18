@@ -199,8 +199,9 @@ class MatchQueue {
                         if ((isRateLimit || isUnavailable) && attempt < retries) {
                             attempt++;
                             
-                            let backoff = Math.pow(2, attempt) * 10000 + Math.random() * 5000;
-                            if (isUnavailable) backoff += 40000;
+                            let backoff = Math.pow(2, attempt) * 15000 + Math.random() * 5000;
+                            if (isUnavailable) backoff += 50000;
+                            if (useSearch) backoff += 20000; // Extra padding for grounding timeouts
 
                             const match = err.message?.match(/retry in ([\d.]+)s/i);
                             if (match && match[1]) {
@@ -385,45 +386,28 @@ const analysisSchema = {
 // --- HELPER LOGIC ---
 
 const generateAnalysisPrompt = (req: { homeTeam: string; awayTeam: string; league: string; kickoff: string; }, now: string) => {
-    return `INSTRUCTION: Extract data for the upcoming match: ${req.homeTeam} vs ${req.awayTeam} in ${req.league}.
-    Kickoff: ${req.kickoff}. Current time: ${now}.
+    return `INSTRUCTION: PERFORM_MINIMALIST_STRUCTURAL_GROUNDING for ${req.homeTeam} vs ${req.awayTeam} (${req.league}).
+    Kickoff: ${req.kickoff}. Time: ${now}.
     
-    Use ONE primary data provider philosophy (Preferably Opta/FBref). Use two secondary sources (Understat/SofaScore) strictly to measure variance. 
-
-    --- FRACTIONAL CALIBRATION ---
-    Find the last 10 matches for each team. Provide goals, xG, isHome, and daysAgo for each.
-
-    --- THE KILL-SWITCH GATE ---
-    You MUST find npxG from three distinct sources (Opta, Understat, SofaScore) for both teams.
-
-    --- EXOGENOUS EVENT OVERRIDES (MEC Matrix) ---
-    Check if:
-    1. Manager was sacked/changed this week.
-    2. Primary squad injury count (starting XI players out).
-    3. MEC Calculation: For each missing key player, find their season avg xG and xT contribution per 90. Sum these as missingExpectedG and missingExpectedT.
-    4. Match context: Dead-Rubber, Derby, or Standard.
-    5. Red card anomalies: Minutes played down a man in the last 3 matches.
-
-    --- UNIFIED QUANT DATA ---
-    Retrieve:
-    1. npxG (Non-penalty xG) from all three sources.
-    2. xT (Expected Threat).
-    3. Rolling averages for xG and xGA.
-    4. Recent form sequence (last 5 xG values).
-    5. Recursive State Data: Last 10 match npxG and xGA values as numeric arrays (npxGSequence and xGASequence). This is critical for warming the Kalman and Fractional Memory filters.
-
-    --- SYSTEM CALIBRATION (DYNAMIC BASELINES) ---
-    Perform a search for the current season's "xG provider variance" for ${req.league}.
-    Find the statistical deflation/inflation factor between Opta (FBref) and Understat/SofaScore. 
-    If Understat consistently over-reports xG by 12% in this league, the understatBias should be 0.88.
+    PRIMARY GOAL: ACCURACY_OVER_PROSE. Favor minified numeric metrics over narrative.
     
-    --- CONFIDENCE VECTOR ---
-    Evaluate match context (manager stability, lineup news, tactical disruption) and generate a confidenceVector from 0 to 1.
+    --- DATA HARVESTING ---
+    1. EXTRACT npxG (Non-penalty xG) from Opta/FBref, Understat, and SofaScore.
+    2. ARCHIVE Match History: Last 10 results (goals, xG, isHome, daysAgo).
+    3. DERIVE Tactical Index: Identify structural regimes (DECAY, TRANSITION, SATURATION).
     
-    --- MARKET DYNAMICS ---
-    Find opening odds vs current odds for the Match Result market. Calculate marketMovementSignal.
+    --- EXOGENOUS AUDIT ---
+    - Squad stability (confirmed starting XI injuries).
+    - Managerial shifts or team DRAMA.
+    - Red card delta minutes (last 3 games).
+    
+    --- MARKET SIGNAL ---
+    - Record opening vs current odds (Match Result).
+    - Detect smart money targets and syndicate flow patterns.
 
-    Provide a comprehensive match summary based on this high-precision intelligence.`;
+    --- RESPONSE DISCIPLINE ---
+    SUMMARY: Max 30 words. Minified analytical tone.
+    PRECISION: All numeric values must represent institutional reality.`;
 };
 
 export const getQueueState = () => matchQueue.state;
@@ -502,7 +486,7 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
                 model: SEARCH_MODEL, 
                 config: { tools: [{ googleSearch: {} }] }, 
                 enableSearch: true,
-                retries: 0, // No retries for Search - fail fast to Core
+                retries: 2, // Targeted retries for grounding logic
                 active: nowMs > groundingCongestedUntil
             },
             { 
