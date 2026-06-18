@@ -10,48 +10,47 @@ interface MatchVisualizerProps {
 export const MatchVisualizer: React.FC<MatchVisualizerProps> = ({ path }) => {
     const getRegimeColor = (regime: string) => {
         switch (regime) {
-            case 'CHAOTIC_DECAY': return 'from-red-600 to-orange-600';
-            case 'FLUID_TRANSITION': return 'from-blue-600 to-indigo-600';
-            case 'HIGH_SATURATION': return 'from-green-600 to-emerald-600';
-            default: return 'from-slate-600 to-slate-700';
+            case 'CHAOTIC_DECAY': return 'from-rose-600 to-orange-500';
+            case 'FLUID_TRANSITION': return 'from-emerald-600 to-teal-500';
+            case 'HIGH_SATURATION': return 'from-emerald-400 to-emerald-600';
+            default: return 'from-emerald-950 to-emerald-900';
         }
     };
 
     return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between text-[10px] uppercase font-bold tracking-[0.2em] text-slate-500">
-                <span>Kickoff Sequence</span>
-                <span>FT Saturation</span>
+        <div className="space-y-6 bg-emerald-950/20 p-6 rounded-2xl border border-emerald-900/30">
+            <div className="flex items-center justify-between text-[10px] uppercase font-black tracking-[0.2em] text-emerald-900">
+                <span>Initialization</span>
+                <span>Structural End</span>
             </div>
             
-            <div className="h-24 flex items-end gap-1.5 px-2">
+            <div className="h-28 flex items-end gap-1.5 px-1">
                 {path.map((step, i) => (
                     <motion.div
                         key={i}
                         initial={{ height: 0 }}
                         animate={{ height: `${step.intensity}%` }}
-                        transition={{ delay: i * 0.05, type: 'spring', damping: 15 }}
-                        className={`flex-1 rounded-t-sm bg-gradient-to-t ${getRegimeColor(step.regime)} opacity-80 hover:opacity-100 transition-opacity cursor-help relative group`}
+                        transition={{ delay: i * 0.03, type: 'spring', damping: 20 }}
+                        className={`flex-1 rounded-t-lg bg-gradient-to-t ${getRegimeColor(step.regime)} opacity-70 hover:opacity-100 transition-opacity cursor-crosshair relative group shadow-lg`}
                     >
-                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-20">
-                            <div className="bg-slate-900 border border-slate-800 p-2 rounded shadow-xl whitespace-nowrap">
-                                <p className="text-[10px] font-bold text-white uppercase tracking-tighter mb-1">{step.regime.replace(/_/g, ' ')}</p>
-                                <div className="flex items-center justify-between gap-4">
-                                    <span className="text-[10px] text-slate-500 font-mono">INT: <span className="text-blue-400">{step.intensity.toFixed(1)}</span></span>
-                                    <span className="text-[10px] text-slate-500 font-mono">CONF: <span className="text-green-400">{(step.confidence * 100).toFixed(0)}%</span></span>
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 hidden group-hover:block z-20">
+                            <div className="bg-zinc-950 border border-emerald-900/50 p-3 rounded-xl shadow-2xl whitespace-nowrap">
+                                <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-2 pb-1 border-b border-emerald-900/20">{step.regime.replace(/_/g, ' ')}</p>
+                                <div className="flex items-center justify-between gap-6">
+                                    <span className="text-[10px] text-emerald-900 font-bold uppercase">Intensity: <span className="text-white">{step.intensity.toFixed(1)}</span></span>
+                                    <span className="text-[10px] text-emerald-900 font-bold uppercase">Surety: <span className="text-emerald-500">{(step.confidence * 100).toFixed(0)}%</span></span>
                                 </div>
                             </div>
-                            <div className="w-2 h-2 bg-slate-900 border-r border-b border-slate-800 rotate-45 mx-auto -mt-1" />
                         </div>
                     </motion.div>
                 ))}
             </div>
 
-            <div className="grid grid-cols-4 gap-2 text-[8px] uppercase tracking-widest font-bold text-slate-600 pt-1 text-center">
-                <span>0'</span>
-                <span>30'</span>
-                <span>60'</span>
-                <span>90'</span>
+            <div className="grid grid-cols-4 gap-2 text-[10px] uppercase tracking-[0.3em] font-black text-emerald-950 pt-2 text-center">
+                <span>00:00</span>
+                <span>30:00</span>
+                <span>60:00</span>
+                <span>90:00</span>
             </div>
         </div>
     );

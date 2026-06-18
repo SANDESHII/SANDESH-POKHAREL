@@ -49,7 +49,7 @@ export const runMonteCarloSimulation = (
     let totalGoalsSum = 0;
     let totalWeight = 0;
     
-    const iterations = 15000; 
+    const iterations = 4000; 
 
     // Dixon-Coles Tau Adjustment Kernel
     const getTau = (x: number, y: number, lambda: number, mu: number, r: number) => {
@@ -113,7 +113,7 @@ export const runMonteCarloSimulation = (
 
     // 2. STRESS TEST (Inversion Audit / Disaster Scenarios)
     let survivalCount = 0;
-    const stressIterations = 2500; 
+    const stressIterations = 1500; 
     for (let j = 0; j < stressIterations; j++) {
         const disasterDrain = 0.55 - (Math.random() * 0.1); // Brutal drain for Fortress stress
         const stressProb = (initialProb / 100) * disasterDrain;

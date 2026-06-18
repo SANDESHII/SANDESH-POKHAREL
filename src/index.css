@@ -1,10 +1,11 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   body {
-    @apply bg-[#020617] text-slate-200 font-sans selection:bg-blue-500/30;
+    @apply bg-black text-emerald-500 font-sans selection:bg-emerald-500/20 uppercase;
   }
 
   /* Custom Scrollbar */
@@ -14,14 +15,18 @@
   }
 
   ::-webkit-scrollbar-track {
-    @apply bg-slate-950;
+    @apply bg-black;
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-slate-800 rounded-full hover:bg-slate-700 transition-colors;
+    @apply bg-emerald-950 rounded-full hover:bg-emerald-800 transition-colors;
   }
 }
 
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
 }

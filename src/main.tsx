@@ -5,7 +5,8 @@ import { createRoot } from 'react-dom/client';
 import { motion } from 'motion/react';
 import { 
     Info,
-    History
+    History,
+    Activity
 } from 'lucide-react';
 import { AnalysisResult } from './types';
 import { runMonteCarloSimulation } from './services/monteCarloService';
@@ -32,16 +33,12 @@ const App: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
 
     const loadingMessages = [
-        "Initializing Nuclear Forensic Audit...",
-        "Calibrating Vendor Bias (Opta Baseline Matrix)...",
-        "Warming Recursive Filters (10-Game Historical State)...",
-        "Identifying Data Source Variance...",
-        "Searching for Exogenous Overrides (Manager/Injuries)...",
-        "Calculating npxG and xT Structural Floor...",
-        "Detecting historical Mirror Matches...",
-        "Running Monte Carlo Simulations...",
-        "Finalizing the Prosecution Case...",
-        "Securing Fortress Verdict..."
+        "SYNCHRONIZING DATA...",
+        "FETCHING HISTORY...",
+        "ANALYZING METRICS...",
+        "SIMULATING OUTCOMES...",
+        "VERIFYING INTEGRITY...",
+        "FINALIZING REPORT..."
     ];
 
     // Status Polling
@@ -56,7 +53,7 @@ const App: React.FC = () => {
             } catch (err) {}
         };
 
-        const interval = setInterval(pollStatus, 4000);
+        const interval = setInterval(pollStatus, 3000);
         pollStatus();
         return () => clearInterval(interval);
     }, []);
@@ -67,7 +64,7 @@ const App: React.FC = () => {
         if (loadingAnalysis) {
             interval = setInterval(() => {
                 setLoadingStage(prev => (prev + 1) % loadingMessages.length);
-            }, 2500);
+            }, 1200);
         } else {
             setLoadingStage(0);
         }
@@ -123,16 +120,16 @@ const App: React.FC = () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    homeTeam: homeInput,
-                    awayTeam: awayInput,
-                    league: leagueInput || 'INSTITUTIONAL_ROUTING',
-                    kickoff: timeInput || 'UPCOMING'
+                    homeTeam: homeInput.toUpperCase(),
+                    awayTeam: awayInput.toUpperCase(),
+                    league: (leagueInput || 'INSTITUTIONAL_ROUTING').toUpperCase(),
+                    kickoff: (timeInput || 'UPCOMING').toUpperCase()
                 })
             });
 
             if (!response.ok) {
                 const errData = await response.json();
-                throw new Error(errData.error || 'The match data stream failed to return a valid response.');
+                throw new Error(errData.error || 'ANALYSIS FAILED TO RETURN VALID DATA.');
             }
 
             const result: AnalysisResult = await response.json();
@@ -141,35 +138,33 @@ const App: React.FC = () => {
                 setUserConfidence(result.context.confidenceVector);
             }
         } catch (err: any) {
-            setError(err.message || 'Analysis failed. System signal lost.');
+            setError(err.message || 'ANALYSIS FAILED. SIGNAL LOST.');
         } finally {
             setLoadingAnalysis(false);
         }
     };
 
     return (
-        <div className="min-h-screen bg-slate-950 text-slate-200 selection:bg-blue-500/30">
+        <div className="min-h-screen bg-black text-emerald-500 selection:bg-emerald-500/20 font-sans">
             <Header status={status} />
             <LoadingOverlay loading={loadingAnalysis} stage={loadingStage} messages={loadingMessages} />
 
-            <main className="max-w-7xl mx-auto px-6 pt-32 pb-24 space-y-12">
+            <main className="max-w-7xl mx-auto px-6 pt-32 pb-24 space-y-16">
                 {/* Introduction Section */}
                 {!analysis && !loadingAnalysis && (
                     <motion.div 
-                        initial={{ opacity: 0, y: 20 }}
+                        initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="max-w-3xl space-y-6"
+                        className="max-w-5xl mx-auto text-center space-y-6"
                     >
-                        <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full">
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-blue-400 font-mono">System Status: Active</span>
+                        <div className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-950/20 border border-emerald-900/30 rounded-full text-[10px] font-black text-emerald-500 tracking-[0.3em] uppercase">
+                            <Activity className="w-3 h-3" /> Professional Grade
                         </div>
-                        <h2 className="text-5xl font-black tracking-tighter text-white leading-[0.9]">
-                            QUANTITATIVE FORENSIC <br/>
-                            <span className="text-slate-600 italic">MATCH VERDICT ENGINE.</span>
+                        <h2 className="text-6xl font-black tracking-tighter text-white uppercase">
+                            INSTITUTIONAL <span className="text-emerald-500">ANALYSIS</span>
                         </h2>
-                        <p className="text-lg text-slate-400 font-medium leading-relaxed max-w-2xl">
-                            Deploying institutional-grade Monte Carlo simulations and recursive Kalman state estimators to neutralize market noise in the Over 1.5 and Under 3.5 corridors.
+                        <p className="text-emerald-900 font-black text-[10px] tracking-[0.4em] uppercase">
+                            Empirical Data // Structural Integrity // Market Reality
                         </p>
                     </motion.div>
                 )}
@@ -188,69 +183,34 @@ const App: React.FC = () => {
                     <motion.div 
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
-                        className="p-4 bg-red-950/20 border border-red-500/30 rounded-xl flex items-center gap-4 text-red-500"
+                        className="p-6 bg-red-950/20 border border-red-900/30 rounded-2xl flex items-center gap-4 text-red-500 shadow-2xl"
                     >
                         <Info className="w-5 h-5 flex-shrink-0" />
-                        <span className="text-sm font-bold uppercase tracking-widest font-mono">{error}</span>
-                        <button onClick={() => setError(null)} className="ml-auto text-xs opacity-50 hover:opacity-100">DISMISS</button>
+                        <span className="text-xs font-black uppercase tracking-widest">{error}</span>
+                        <button onClick={() => setError(null)} className="ml-auto text-[10px] font-black opacity-50 hover:opacity-100 underline decoration-red-900 underline-offset-4 tracking-[0.2em] uppercase">RETRY</button>
                     </motion.div>
                 )}
 
                 {/* Analysis Results Display */}
-                {analysis && surety && (
+                {analysis && surety && !loadingAnalysis && (
                     <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-700"
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="animate-in fade-in slide-in-from-bottom-4 duration-1000"
                     >
                         <ResultGrid analysis={analysis} surety={surety} />
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div className="md:col-span-2">
-                                <LogPanel analysis={analysis} />
-                            </div>
-                            <div className="bg-slate-900/40 p-6 rounded-2xl border border-slate-800 space-y-4">
-                                <div className="flex items-center gap-3 mb-4">
-                                    <History className="w-5 h-5 text-slate-500" />
-                                    <h3 className="text-xs font-bold uppercase tracking-widest text-white">Institutional Constraints</h3>
-                                </div>
-                                <div className="space-y-6">
-                                    <div className="space-y-2">
-                                        <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                                            <span>System Volatility (Tax)</span>
-                                            <span className="font-mono text-white">{(surety.contextualVolatility * 10).toFixed(1)} UNITS</span>
-                                        </div>
-                                        <div className="h-1.5 bg-slate-950 rounded-full overflow-hidden">
-                                            <div className="h-full bg-blue-500" style={{ width: `${surety.contextualVolatility * 100}%` }} />
-                                        </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-500">
-                                            <span>EVT Tail Risk (Audit)</span>
-                                            <span className="font-mono text-white">{surety.evtTailRisk.toFixed(1)}%</span>
-                                        </div>
-                                        <div className="h-1.5 bg-slate-950 rounded-full overflow-hidden">
-                                            <div className="h-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.6)]" style={{ width: `${surety.evtTailRisk}%` }} />
-                                        </div>
-                                    </div>
-                                    <p className="text-[10px] text-slate-500 font-medium leading-relaxed italic border-t border-slate-800/50 pt-4">
-                                        "Matches with high system volatility and EVT risk are structurally pruned from Medallion status to protect capital integrity."
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
                     </motion.div>
                 )}
             </main>
 
-            <footer className="max-w-7xl mx-auto px-6 py-12 border-t border-slate-900 flex flex-col md:flex-row items-center justify-between gap-8 text-slate-600">
-                <div className="flex items-center gap-4">
-                    <span className="text-[10px] font-bold uppercase tracking-[0.3em]">Institutional ID: <span className="text-slate-400">MF-PRO-001</span></span>
-                    <span className="w-1 h-1 rounded-full bg-slate-800" />
-                    <span className="text-[10px] font-bold uppercase tracking-[0.3em]">Clearance: <span className="text-slate-400">LEVEL 4</span></span>
+            <footer className="max-w-7xl mx-auto px-6 py-16 border-t border-emerald-900/20 flex flex-col md:flex-row items-center justify-between gap-8 text-emerald-950">
+                <div className="flex items-center gap-6">
+                    <span className="text-[10px] font-black uppercase tracking-[0.3em]">ID: <span className="text-emerald-900 font-mono">MF-PRO-001</span></span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-950" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.3em]">SECURITY: <span className="text-emerald-900">LEVEL 4</span></span>
                 </div>
-                <div className="text-[10px] font-mono text-slate-700">
-                    &copy; 2024 MATCH FORTRESS PRO. ALL ASSETS SECURED UNDER INSTITUTIONAL AUDIT.
+                <div className="text-[10px] font-black uppercase tracking-widest opacity-60">
+                    &copy; 2024 FORTRESS PRO. AUDITED UNDER NUCLEAR CONSENSUS PROTOCOL.
                 </div>
             </footer>
         </div>
