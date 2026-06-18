@@ -26,6 +26,7 @@ const App: React.FC = () => {
     const [leagueInput, setLeagueInput] = useState('');
     const [timeInput, setTimeInput] = useState('');
     const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+    const [simulation, setSimulation] = useState<any>(null);
     const [userConfidence, setUserConfidence] = useState<number>(0.85);
     const [status, setStatus] = useState({ depth: 0, isCoolingDown: false, cooldownRemaining: 0, message: '' });
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
@@ -33,12 +34,12 @@ const App: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
 
     const loadingMessages = [
-        "SYNCHRONIZING DATA...",
-        "FETCHING HISTORY...",
-        "ANALYZING METRICS...",
-        "SIMULATING OUTCOMES...",
-        "VERIFYING INTEGRITY...",
-        "FINALIZING REPORT..."
+        "ESTABLISHING GROUNDING LINK...",
+        "INDEXING NPXG METRICS...",
+        "AUDITING SQUAD STABILITY...",
+        "DETERMINING COMPUTE HEURISTICS...",
+        "EXECUTING ADAPTIVE MONTE CARLO LOOPS...",
+        "VERIFYING DIXON-COLES INTEGRITY..."
     ];
 
     // Status Polling
@@ -71,27 +72,42 @@ const App: React.FC = () => {
         return () => clearInterval(interval);
     }, [loadingAnalysis]);
 
-    // Data Processing
+    // Data Processing (Lightweight)
     const calibratedData = useMemo(() => {
         if (!analysis || !analysis.homeStats.matchHistory || !analysis.awayStats.matchHistory) return null;
         return calibrateMatchParameters(analysis.homeStats.matchHistory, analysis.awayStats.matchHistory);
     }, [analysis]);
 
-    const simulation = useMemo(() => {
-        if (!analysis) return null;
-        const floor = calibratedData?.structuralFloor || analysis.structuralFloor || 1.2;
-        const ceiling = calibratedData?.physicalCeiling || analysis.physicalCeiling || 6.0;
+    // Asynchronous Simulation (Heavyweight)
+    useEffect(() => {
+        if (!analysis) {
+            setSimulation(null);
+            return;
+        }
 
-        return runMonteCarloSimulation(
-            analysis.probability, 
-            analysis.regimePath, 
-            floor,
-            ceiling,
-            analysis.homeStats.name,
-            analysis.awayStats.name,
-            userConfidence,
-            analysis.rho
-        );
+        const runAsyncSimulation = async () => {
+            const floor = calibratedData?.structuralFloor || analysis.structuralFloor || 1.2;
+            const ceiling = calibratedData?.physicalCeiling || analysis.physicalCeiling || 6.0;
+
+            // Yield thread before running heavy computation
+            setTimeout(async () => {
+                const result = await runMonteCarloSimulation(
+                    analysis.probability, 
+                    analysis.regimePath, 
+                    floor,
+                    ceiling,
+                    analysis.homeStats.name,
+                    analysis.awayStats.name,
+                    calibratedData?.homeLambda || 1.35,
+                    calibratedData?.awayMu || 1.35,
+                    userConfidence,
+                    analysis.rho
+                );
+                setSimulation(result);
+            }, 50);
+        };
+
+        runAsyncSimulation();
     }, [analysis, calibratedData, userConfidence]);
 
     const surety = useMemo(() => {
@@ -112,8 +128,11 @@ const App: React.FC = () => {
     }, [analysis, simulation]);
 
     const handleAnalyze = async () => {
-        if (!homeInput || !awayInput) return;
+        if (loadingAnalysis || !homeInput || !awayInput) return;
         setLoadingAnalysis(true);
+        setLoadingStage(0); // Reset progress indicators
+        setAnalysis(null); 
+        setSimulation(null);
         setError(null);
         try {
             const response = await fetch('/api/analyze', {
@@ -198,7 +217,11 @@ const App: React.FC = () => {
                         animate={{ opacity: 1, y: 0 }}
                         className="animate-in fade-in slide-in-from-bottom-4 duration-1000"
                     >
-                        <ResultGrid analysis={analysis} surety={surety} />
+                        <ResultGrid 
+                            analysis={analysis} 
+                            surety={surety} 
+                            isOptimized={simulation?.computeOptimized} 
+                        />
                     </motion.div>
                 )}
             </main>

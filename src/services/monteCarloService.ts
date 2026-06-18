@@ -26,18 +26,24 @@ export interface SimulationResult {
     marketAudits: MarketAudit[];
     divergence: number;
     survivalRating: number; 
+    computeOptimized: boolean; // Flag for UI feedback
 }
 
-export const runMonteCarloSimulation = (
+export const runMonteCarloSimulation = async (
     initialProb: number, 
     path: RegimeState[],
     structuralFloor: number,
-    physicalCeiling: number, // Added Physical Ceiling derived from mathUtils
+    physicalCeiling: number,
     homeName: string,
     awayName: string,
-    confidenceVector: number = 0.85, // Default high confidence
-    rho: number = 0 // Dixon-Coles adjustment
-): SimulationResult => {
+    homeLambda: number = 1.35, // Added for adaptive compute
+    awayMu: number = 1.35,     // Added for adaptive compute
+    confidenceVector: number = 0.85, 
+    rho: number = 0 
+): Promise<SimulationResult> => {
+    let homeWins = 0;
+    let draws = 0;
+    let awayWins = 0;
     let homeOver05 = 0;
     let homeOver15 = 0;
     let awayOver05 = 0;
@@ -49,7 +55,12 @@ export const runMonteCarloSimulation = (
     let totalGoalsSum = 0;
     let totalWeight = 0;
     
-    const iterations = 4000; 
+    // HEURISTIC: Adaptive Compute Gatekeeper
+    // obv blowout matches don't need 17.5k simulations to prove the distribution
+    // ADAPTIVE_COMPUTE_GATEKEEPER: Full load for volatile margins only
+    const skillGap = Math.abs(homeLambda - awayMu);
+    const iterations = skillGap > 1.75 ? 2000 : 17500;
+    const batchSize = 2500;
 
     // Dixon-Coles Tau Adjustment Kernel
     const getTau = (x: number, y: number, lambda: number, mu: number, r: number) => {
@@ -66,7 +77,13 @@ export const runMonteCarloSimulation = (
     let totalProbSum = 0;
     let squaredProbSum = 0;
     
+    // Main Simulation Phase
     for (let i = 0; i < iterations; i++) {
+        // Yield to browser event loop to keep Vite heartbeat and WebSockets alive
+        if (i > 0 && i % batchSize === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
         const randomFactor = (Math.random() * 0.12 - 0.06) * noiseMultiplier;
         const pathInfluence = path.reduce((acc, p) => acc + (p.confidence * p.intensity), 0) / (path.length * 100);
         const currentProb = (initialProb / 100 + randomFactor + pathInfluence);
@@ -96,6 +113,10 @@ export const runMonteCarloSimulation = (
         totalWeight += weight;
         totalGoalsSum += totalGoals * weight;
 
+        if (simHomeGoals > simAwayGoals) homeWins += weight;
+        else if (simHomeGoals === simAwayGoals) draws += weight;
+        else awayWins += weight;
+
         if (simHomeGoals > 0) homeOver05 += weight;
         if (simHomeGoals > 1) homeOver15 += weight;
         if (simAwayGoals > 0) awayOver05 += weight;
@@ -113,8 +134,12 @@ export const runMonteCarloSimulation = (
 
     // 2. STRESS TEST (Inversion Audit / Disaster Scenarios)
     let survivalCount = 0;
-    const stressIterations = 1500; 
     for (let j = 0; j < stressIterations; j++) {
+        // Yield every 1000 stress iterations as well
+        if (j > 0 && j % batchSize === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
         const disasterDrain = 0.55 - (Math.random() * 0.1); // Brutal drain for Fortress stress
         const stressProb = (initialProb / 100) * disasterDrain;
         
@@ -158,6 +183,24 @@ export const runMonteCarloSimulation = (
     const baseSurety = Math.min(100, Math.max(0, (confidenceVector * 100) - (divergence * 0.8)));
 
     const marketAudits: MarketAudit[] = [
+        { 
+            name: `${homeName} WIN`, 
+            rawProb: (homeWins / totalWeight) * 100, 
+            regimeAlignment: calculateAlignment(`${homeName} WIN`), 
+            suretyScore: baseSurety * 1.05 
+        },
+        { 
+            name: `${awayName} WIN`, 
+            rawProb: (awayWins / totalWeight) * 100, 
+            regimeAlignment: calculateAlignment(`${awayName} WIN`), 
+            suretyScore: baseSurety * 1.05 
+        },
+        { 
+            name: "DRAW", 
+            rawProb: (draws / totalWeight) * 100, 
+            regimeAlignment: calculateAlignment("DRAW"), 
+            suretyScore: baseSurety * 0.8
+        },
         { 
             name: "TOTAL OVER 1.5", 
             rawProb: (totalOver15 / totalWeight) * 100, 
@@ -209,7 +252,8 @@ export const runMonteCarloSimulation = (
         infallibleAudit,
         marketAudits,
         divergence,
-        survivalRating
+        survivalRating,
+        computeOptimized: alphaDiff > 1.8
     };
 };
 

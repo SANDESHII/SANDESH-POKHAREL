@@ -20,10 +20,10 @@ import { IngestionService } from "./src/services/ingestionService";
 import { getTeamBaseline } from "./src/services/baselineDataService";
 import { AnalysisResult } from "./src/types";
 
-const CORE_MODEL = 'gemini-3.5-flash'; 
-const SEARCH_MODEL = 'gemini-3.5-flash'; 
-const FALLBACK_MODEL = 'gemini-flash-latest'; 
-const LIGHT_MODEL = 'gemini-3.1-flash-lite'; 
+const CORE_MODEL = 'gemini-3-flash-preview'; 
+const SEARCH_MODEL = 'gemini-3-flash-preview'; 
+const FALLBACK_MODEL = 'gemini-3-flash-preview'; 
+const LIGHT_MODEL = 'gemini-3-flash-preview'; 
 const CACHE_FILE = path.join(process.cwd(), 'match_cache.json');
 
 // --- ADVANCED NETWORK INTELLIGENCE ---
@@ -32,13 +32,12 @@ interface CircuitState {
     congestedUntil: number;
     failureCount: number;
     lastFailureType?: 'QUOTA' | 'NETWORK' | 'LOGIC';
+    searchExhaustedUntil?: number;
 }
 
 let modelHealth: Record<string, CircuitState> = {
-    ['gemini-3.5-flash']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 },
-    ['gemini-flash-latest']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 },
-    ['gemini-3.1-flash-lite']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 },
-    ['gemini-3.1-pro-preview']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 }
+    ['gemini-3-flash-preview']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 },
+    ['gemini-2.0-flash']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 }
 };
 
 let groundingCongestedUntil = 0;
@@ -52,22 +51,24 @@ const isModelHealthy = (model: string) => {
 };
 
 const markModelExhausted = (model: string, durationMs: number = 3600000) => { 
-    if (modelHealth[model]) {
-        console.warn(`[CIRCUIT_BREAKER] ${model} EXHAUSTED (Quota hit). Locking for ${durationMs / 60000}m`);
-        modelHealth[model].exhaustedUntil = Date.now() + durationMs;
-        modelHealth[model].lastFailureType = 'QUOTA';
-        saveStorage();
+    if (!modelHealth[model]) {
+        modelHealth[model] = { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 };
     }
+    console.warn(`[CIRCUIT_BREAKER] ${model} EXHAUSTED (Quota hit). Locking for ${durationMs / 60000}m`);
+    modelHealth[model].exhaustedUntil = Date.now() + durationMs;
+    modelHealth[model].lastFailureType = 'QUOTA';
+    saveStorage();
 };
 
 const markModelCongested = (model: string, durationMs: number = 180000) => {
-    if (modelHealth[model]) {
-        console.warn(`[CIRCUIT_BREAKER] ${model} CONGESTED (503/Timeout). Slowing for ${durationMs / 1000}s`);
-        modelHealth[model].congestedUntil = Date.now() + durationMs;
-        modelHealth[model].failureCount++;
-        modelHealth[model].lastFailureType = 'NETWORK';
-        saveStorage();
+    if (!modelHealth[model]) {
+        modelHealth[model] = { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 };
     }
+    console.warn(`[CIRCUIT_BREAKER] ${model} CONGESTED (503/Timeout). Slowing for ${durationMs / 1000}s`);
+    modelHealth[model].congestedUntil = Date.now() + durationMs;
+    modelHealth[model].failureCount++;
+    modelHealth[model].lastFailureType = 'NETWORK';
+    saveStorage();
 };
 
 // --- DURABLE CACHE (File-based Persistence) ---
@@ -175,17 +176,28 @@ class MatchQueue {
                         return;
                     } catch (err: any) {
                         const errMessage = (err.message || "").toLowerCase();
-                        const isRateLimit = err.status === 429 || err.code === 429 || errMessage.includes('429') || errMessage.includes('quota');
-                        const isUnavailable = err.status === 503 || err.code === 503 || errMessage.includes('503') || errMessage.includes('unavailable') || errMessage.includes('high demand');
+                        const isRateLimit = err.status === 429 || err.code === 429 || errMessage.includes('429') || errMessage.includes('quota') || errMessage.includes('limit');
+                        const isUnavailable = err.status === 503 || err.code === 503 || errMessage.includes('503') || errMessage.includes('unavailable') || errMessage.includes('high demand') || errMessage.includes('congested');
+                        const isSearchLimit = errMessage.includes('search_limit_hit') || errMessage.includes('searching') || errMessage.includes('grounding');
+                        const isNotFound = err.status === 404 || err.code === 404 || errMessage.includes('404') || errMessage.includes('not found');
                         
+                        if (isNotFound) {
+                            markModelExhausted(model, 5000); // 5 second lock for 404 models during debug/deploy
+                            reject(new Error(`MODEL_NOT_FOUND: ${model}`));
+                            return;
+                        }
+
+                        if (isSearchLimit) {
+                            groundingCongestedUntil = Date.now() + 600000; // 10 min search lock
+                            reject(new Error("SEARCH_LIMIT_HIT"));
+                            return;
+                        }
+
                         if (isRateLimit) {
                             const isHardLimit = errMessage.includes('limit: 0');
                             markModelExhausted(model, isHardLimit ? 3600000 : 90000); 
-                            
-                            if (useSearch) {
-                                reject(new Error("SEARCH_LIMIT_HIT"));
-                                return;
-                            }
+                            reject(new Error(isHardLimit ? "MODEL_EXHAUSTED" : "QUOTA_EXCEEDED"));
+                            return;
                         }
 
                         if (isUnavailable) {
@@ -385,29 +397,34 @@ const analysisSchema = {
 
 // --- HELPER LOGIC ---
 
-const generateAnalysisPrompt = (req: { homeTeam: string; awayTeam: string; league: string; kickoff: string; }, now: string) => {
-    return `INSTRUCTION: PERFORM_MINIMALIST_STRUCTURAL_GROUNDING for ${req.homeTeam} vs ${req.awayTeam} (${req.league}).
-    Kickoff: ${req.kickoff}. Time: ${now}.
-    
-    PRIMARY GOAL: ACCURACY_OVER_PROSE. Favor minified numeric metrics over narrative.
-    
-    --- DATA HARVESTING ---
-    1. EXTRACT npxG (Non-penalty xG) from Opta/FBref, Understat, and SofaScore.
-    2. ARCHIVE Match History: Last 10 results (goals, xG, isHome, daysAgo).
-    3. DERIVE Tactical Index: Identify structural regimes (DECAY, TRANSITION, SATURATION).
-    
-    --- EXOGENOUS AUDIT ---
-    - Squad stability (confirmed starting XI injuries).
-    - Managerial shifts or team DRAMA.
-    - Red card delta minutes (last 3 games).
-    
-    --- MARKET SIGNAL ---
-    - Record opening vs current odds (Match Result).
-    - Detect smart money targets and syndicate flow patterns.
+const generateAnalysisPrompt = (req: { homeTeam: string; awayTeam: string; league: string; kickoff: string; }, now: string, baselines?: { home?: any, away?: any }, isSearchEnabled: boolean = true) => {
+    let baselineContext = "";
+    if (baselines?.home || baselines?.away) {
+        baselineContext = `\n--- VERIFIED_INSTITUTIONAL_BASELINES ---\n`;
+        if (baselines.home) baselineContext += `${req.homeTeam}: npxG=${baselines.home.npxG}, xT=${baselines.home.xT}, avgXG=${baselines.home.avgXG}, avgXGA=${baselines.home.avgXGA}, CS=${baselines.home.cleanSheets}\n`;
+        if (baselines.away) baselineContext += `${req.awayTeam}: npxG=${baselines.away.npxG}, xT=${baselines.away.xT}, avgXG=${baselines.away.avgXG}, avgXGA=${baselines.away.avgXGA}, CS=${baselines.away.cleanSheets}\n`;
+        baselineContext += `INSTRUCTION: Use these baselines as anchor points. Reconcile with latest news/lineups to identify immediate variance.\n`;
+    }
 
-    --- RESPONSE DISCIPLINE ---
-    SUMMARY: Max 30 words. Minified analytical tone.
-    PRECISION: All numeric values must represent institutional reality.`;
+    const searchInstruction = isSearchEnabled 
+        ? "GROUNDING: Use Google Search to find latest starting XIs, tactical shifts, and motivation." 
+        : "GROUNDING: Web Search is restricted. SYNTHESIZE analysis using ONLY the provided Institutional Baselines and historical league knowledge.";
+
+    return `INSTRUCTION: PERFORM_FORENSIC_DATA_INGESTION for ${req.homeTeam} vs ${req.awayTeam} (${req.league}).
+    Kickoff: ${req.kickoff}. Reference Time: ${now}.
+    ${baselineContext}
+    ${searchInstruction}
+
+    PRIMARY MISSION: Extract high-variance data points (the 'Atoms' of the match).
+    
+    --- REQUIRED_DATA_POINTS ---
+    1. LATEST_TEAM_NEWS: Identify key missing starters.
+    2. TACTICAL_SHIFT: Any recent formation changes.
+    3. MOTIVATIONAL_INDEX: Relegation pressure or derby intensity.
+    
+    --- OUTPUT_DISCIPLINE ---
+    - Use Baselines as the mathematical floor.
+    - RETURN_RAW_JSON_ONLY. No prose. No markdown blocks.`;
 };
 
 export const getQueueState = () => matchQueue.state;
@@ -439,9 +456,9 @@ const generatePseudoAnalysis = (req: { homeTeam: string; awayTeam: string; leagu
         rho: dc.rho,
         regimePath: regime,
         structuralFloor: 1.0,
-        physicalCeiling: 2.5,
+        physicalCeiling: 3.5,
         structuralData: { floor: 1.0, cushion: 0.5 },
-        signalPrecision: 0.7,
+        signalPrecision: 0.85,
         physics: { metAudit: true, saturation: 0.8, integrityScore: 0.9 },
         context: { weather: "Clear", referee: "Standard", stadium: "Historical", historicalRivalry: 0.5, stakes: "League", confidenceVector: 0.8 },
         marketReality: { syndicateFlow: "MEDIUM", smartMoneyTarget: "Equilibrium", marketDivergence: 0.0, sentimentScore: 0.5, openingOdds: { home: 2.0, draw: 3.4, away: 3.6 }, currentOdds: { home: 2.0, draw: 3.4, away: 3.6 }, marketMovementSignal: 0 },
@@ -452,7 +469,8 @@ const generatePseudoAnalysis = (req: { homeTeam: string; awayTeam: string; leagu
         maxVariance: 0.1,
         modelMode: 'POISSON_FALLBACK',
         matchContextFlag: 'Standard',
-        calibration: { understatBias: 1, sofaScoreBias: 1, calibrationConfidence: 0.8 }
+        calibration: { understatBias: 1, sofaScoreBias: 1, calibrationConfidence: 0.8 },
+        groundingStatus: 'DEGRADED'
     };
 };
 
@@ -470,7 +488,12 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
     }
 
     try {
-        const prompt = generateAnalysisPrompt(req, now);
+        // Retrieve Institutional Baselines for Smart Routing
+        const homeBaseline = getTeamBaseline(req.homeTeam);
+        const awayBaseline = getTeamBaseline(req.awayTeam);
+        const isWellKnownMatchup = (homeBaseline.cleanSheets > 6 && awayBaseline.cleanSheets > 6);
+
+        const prompt = generateAnalysisPrompt(req, now, { home: homeBaseline, away: awayBaseline });
         const fallbackToStaleCache = () => {
             if (cached) {
                 console.warn(`[RECOVERY] Returning STALE cache due to network congestion for ${req.homeTeam} vs ${req.awayTeam}`);
@@ -480,69 +503,76 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         };
 
         // Execution Strategy Matrix - Smart Multi-Tier Failover
+        // HEURISTIC: Skip search if matchup is well-known and grounding is congested
         const strategies = [
             { 
-                name: 'SEARCH_GROUNDING', 
-                model: SEARCH_MODEL, 
+                name: 'FORENSIC_GROUNDING', 
+                model: 'gemini-3-flash-preview', 
                 config: { tools: [{ googleSearch: {} }] }, 
                 enableSearch: true,
-                retries: 2, // Targeted retries for grounding logic
-                active: nowMs > groundingCongestedUntil
+                retries: 2, 
+                active: nowMs > groundingCongestedUntil && !isWellKnownMatchup
             },
             { 
-                name: 'HIGH_IQ_CORE', 
-                model: CORE_MODEL, 
+                name: 'INSTITUTIONAL_CORE_3.0', 
+                model: 'gemini-3-flash-preview', 
                 config: {}, 
                 enableSearch: false,
-                retries: 4, // High retries for the main brains
+                retries: 5, 
                 active: true
             },
             { 
-                name: 'LEGACY_RELIANCE', 
-                model: FALLBACK_MODEL, 
+                name: 'SAFETY_NET_2.0', 
+                model: 'gemini-2.0-flash', 
                 config: {}, 
                 enableSearch: false,
-                retries: 2,
-                active: true
-            },
-            {
-                name: 'LIGHTWEIGHT_PULSE',
-                model: LIGHT_MODEL,
-                config: {},
-                enableSearch: false,
-                retries: 2,
+                retries: 3, 
                 active: true
             }
         ];
 
         let response;
         let lastError;
+        let groundingStatus: 'OPTIMAL' | 'DEGRADED' | 'FAILED' = 'FAILED';
 
         for (const strategy of strategies) {
             if (!strategy.active || !isModelHealthy(strategy.model)) {
+                console.log(`[ROUTING] Skipping ${strategy.name}: Model or Search not healthy`);
                 continue;
             }
 
             try {
-                console.log(`[ROUTING] Attempting strategy: ${strategy.name} using ${strategy.model}`);
-                response = await matchQueue.add(({ model }) => ai.models.generateContent({
-                    model,
-                    contents: strategy.enableSearch ? prompt : prompt + "\n\nNOTE: System operating in stable high-precision mode.",
-                    config: {
-                        ...strategy.config,
-                        responseMimeType: "application/json",
-                        responseSchema: analysisSchema
-                    },
-                }), strategy.model, strategy.enableSearch, strategy.retries);
+                console.log(`[ROUTING] Attempting strategy: ${strategy.name} (Search: ${strategy.enableSearch})`);
+                
+                response = await matchQueue.add(async ({ model }) => {
+                    // DYNAMIC PROMPT GENERATION: Adjusts grounding context per strategy
+                    const promptText = generateAnalysisPrompt(req, now, { home: homeBaseline, away: awayBaseline }, strategy.enableSearch);
+                    
+                    const result = await ai.models.generateContent({
+                        model,
+                        contents: [{ role: "user", parts: [{ text: promptText }] }],
+                        config: {
+                            ...strategy.config,
+                            responseMimeType: "application/json",
+                            responseSchema: analysisSchema as any
+                        }
+                    });
+                    
+                    return result;
+                }, strategy.model, strategy.enableSearch, strategy.retries);
                 
                 // Success - break the strategy loop
+                console.log(`[ROUTING] Strategy ${strategy.name} succeeded.`);
+                groundingStatus = strategy.name === 'FORENSIC_GROUNDING' ? 'OPTIMAL' : 'DEGRADED';
                 break;
             } catch (err: any) {
                 lastError = err;
-                console.warn(`[ROUTING] Strategy ${strategy.name} failed: ${err.message}`);
+                const msg = err.message || JSON.stringify(err);
+                console.warn(`[ROUTING] Strategy ${strategy.name} failed: ${msg}`);
                 
-                if (strategy.enableSearch && (err.message?.includes('503') || err.message?.includes('CONGESTED'))) {
-                    groundingCongestedUntil = Date.now() + (15 * 60 * 1000); // 15 min grounding lock
+                if (strategy.enableSearch && (msg.toLowerCase().includes('limit') || msg.toLowerCase().includes('congested') || msg.toLowerCase().includes('grounding') || msg.toUpperCase().includes('QUOTA_EXCEEDED'))) {
+                    groundingCongestedUntil = Date.now() + (20 * 60 * 1000); // 20 min grounding lock on quota or congestion
+                    console.warn(`[ROUTING] Grounding disabled for 20 minutes due to: ${msg}`);
                 }
                 
                 // Allow loop to proceed to next strategy
@@ -562,13 +592,30 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             }
         }
 
-        const text = response.text;
+        const text = typeof response.text === 'function' ? response.text() : response.text;
         if (!text) {
             throw new Error("Match analysis failed: Data stream empty.");
         }
         const parsedData = JSON.parse(text.trim());
 
+        // RIGID SCHEMA CLAMPING: Eliminating data noise and physically impossible outliers
+        const structuralFloor = 0.2;
+        const physicalCeiling = 4.5;
+        const clampXG = (val: number) => Math.max(structuralFloor, Math.min(val || structuralFloor, physicalCeiling));
+
+        if (parsedData.home) {
+            parsedData.home.avgXG = clampXG(parsedData.home.avgXG);
+            parsedData.home.avgXGA = clampXG(parsedData.home.avgXGA);
+            parsedData.home.npxG = clampXG(parsedData.home.npxG);
+        }
+        if (parsedData.away) {
+            parsedData.away.avgXG = clampXG(parsedData.away.avgXG);
+            parsedData.away.avgXGA = clampXG(parsedData.away.avgXGA);
+            parsedData.away.npxG = clampXG(parsedData.away.npxG);
+        }
+
         const rawSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+        const searchEntry = response.candidates?.[0]?.groundingMetadata?.searchEntryPoint?.htmlContent;
         const sources = rawSources
             .map((c: any) => ({ title: c.web?.title || 'Expert Source', uri: c.web?.uri }))
             .filter((s: any) => s.uri);
@@ -698,7 +745,8 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             maxVariance,
             modelMode,
             matchContextFlag: data.matchContextFlag,
-            calibration: data.calibration
+            calibration: data.calibration,
+            groundingStatus
         };
 
         // Store in Cache
@@ -708,10 +756,26 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         return analysisResult;
     } catch (e: any) {
         console.error("Match Analysis Failed:", e);
-        const errStr = e.message || JSON.stringify(e);
-        const isQuota = errStr.includes('QUOTA') || errStr.includes('LIMIT') || errStr.includes('429');
+        const errStr = (e.message || JSON.stringify(e)).toLowerCase();
+        
+        // Final Level fallback if logic crashes or all else fails
+        if (!errStr.includes('quota') && !errStr.includes('limit')) {
+            try {
+                console.warn("[RECOVERY] Hard Crash in performAnalysis - Returning Emergency Pseudo-Analysis");
+                return generatePseudoAnalysis(req);
+            } catch (inner) {}
+        }
+
+        const isQuota = errStr.includes('quota') || errStr.includes('limit') || errStr.includes('429');
         const isUnavailable = errStr.includes('503') || errStr.includes('UNAVAILABLE') || errStr.includes('demand');
         
+        if (isQuota || isUnavailable) {
+            try {
+                console.warn("[RECOVERY] Quota/Unavailable - returning pseudo-analysis as prediction.");
+                return generatePseudoAnalysis(req);
+            } catch (inner) {}
+        }
+
         if (isQuota) {
             let retryMsg = "System is slightly congested (Rate Limit).";
             const match = errStr.match(/retry in ([\d.]+)s/i);

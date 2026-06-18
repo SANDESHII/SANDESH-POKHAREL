@@ -9,13 +9,14 @@ import { MatchVisualizer } from './MatchVisualizer';
 interface ResultGridProps {
     analysis: AnalysisResult;
     surety: MedallionResult;
+    isOptimized?: boolean;
 }
 
-export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
+export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety, isOptimized }) => {
     return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 focus:outline-none">
             <div className="lg:col-span-8 space-y-10">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                     <StatCard 
                         label="Success Index" 
                         value={`${analysis.probability}%`} 
@@ -36,6 +37,21 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                         subValue="LIMIT"
                         icon={Target} 
                         color="purple"
+                    />
+                    <StatCard 
+                        label="Grounding Signal" 
+                        value={analysis.groundingStatus || 'OPTIMAL'} 
+                        subValue={
+                            analysis.groundingStatus === 'OPTIMAL' ? 'SEARCH_LIVE_GROUNDING' : 
+                            analysis.groundingStatus === 'DEGRADED' ? 'INSTITUTIONAL_FALLBACK' : 
+                            'EMERGENCY_RECOVERY_MODE'
+                        }
+                        icon={Activity} 
+                        color={
+                            analysis.groundingStatus === 'OPTIMAL' ? 'green' : 
+                            analysis.groundingStatus === 'DEGRADED' ? 'orange' : 
+                            'red'
+                        }
                     />
                 </div>
 
@@ -93,10 +109,18 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
 
             <div className="lg:col-span-4 space-y-10">
                 <div className="bg-emerald-950/20 border border-emerald-500/30 p-12 rounded-2xl text-center space-y-10 shadow-2xl relative overflow-hidden">
+                    {isOptimized && (
+                        <div className="absolute top-4 right-4 z-50">
+                            <div className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/40 rounded-full flex items-center gap-2">
+                                <Activity className="w-2.5 h-2.5 text-emerald-400 animate-pulse" />
+                                <span className="text-[8px] font-black uppercase text-emerald-400 tracking-widest">Adaptive Compute Active</span>
+                            </div>
+                        </div>
+                    )}
                     <div className="relative z-10 space-y-3">
                         <span className="text-[10px] uppercase font-black tracking-[0.5em] text-emerald-900">Execution Verdict</span>
-                        <h2 className="text-7xl font-black italic tracking-tighter uppercase text-emerald-400 drop-shadow-[0_0_20px_rgba(52,211,153,0.3)]">
-                            {surety.verdict}
+                        <h2 className="text-5xl md:text-7xl font-black italic tracking-tighter uppercase text-emerald-400 drop-shadow-[0_0_20px_rgba(52,211,153,0.3)]">
+                            {surety.bestBet?.name || surety.verdict}
                         </h2>
                     </div>
 

@@ -94,6 +94,7 @@ export interface AnalysisResult {
     modelMode: 'NUCLEAR_FORTRESS' | 'POISSON_FALLBACK';
     matchContextFlag?: 'Dead-Rubber' | 'Derby' | 'Standard';
     calibration?: CalibrationMatrix;
+    groundingStatus?: 'OPTIMAL' | 'DEGRADED' | 'FAILED';
 }
 
 export interface CalibrationMatrix {
