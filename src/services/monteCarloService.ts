@@ -60,6 +60,7 @@ export const runMonteCarloSimulation = async (
     // ADAPTIVE_COMPUTE_GATEKEEPER: Full load for volatile margins only
     const skillGap = Math.abs(homeLambda - awayMu);
     const iterations = skillGap > 1.75 ? 2000 : 17500;
+    const stressIterations = skillGap > 1.75 ? 500 : 2500;
     const batchSize = 2500;
 
     // Dixon-Coles Tau Adjustment Kernel
@@ -253,7 +254,7 @@ export const runMonteCarloSimulation = async (
         marketAudits,
         divergence,
         survivalRating,
-        computeOptimized: alphaDiff > 1.8
+        computeOptimized: skillGap > 1.75
     };
 };
 

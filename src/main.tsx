@@ -128,6 +128,7 @@ const App: React.FC = () => {
     }, [analysis, simulation]);
 
     const handleAnalyze = async () => {
+        // UI_STATE_GATE: Prevent concurrent analysis collisions
         if (loadingAnalysis || !homeInput || !awayInput) return;
         setLoadingAnalysis(true);
         setLoadingStage(0); // Reset progress indicators
