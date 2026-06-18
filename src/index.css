@@ -4,6 +4,24 @@
 
 @layer base {
   body {
-    @apply bg-[#020617] text-slate-200 font-sans;
+    @apply bg-[#020617] text-slate-200 font-sans selection:bg-blue-500/30;
   }
+
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-slate-950;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-800 rounded-full hover:bg-slate-700 transition-colors;
+  }
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
 }

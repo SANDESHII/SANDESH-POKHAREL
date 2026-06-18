@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { performAnalysis, getQueueState } from "./src/services/geminiService";
+import { performAnalysis, getQueueState } from "./geminiService";
 
 async function startServer() {
   const app = express();
