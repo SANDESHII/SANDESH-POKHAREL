@@ -26,7 +26,11 @@ export interface SimulationResult {
     marketAudits: MarketAudit[];
     divergence: number;
     survivalRating: number; 
-    computeOptimized: boolean; // Flag for UI feedback
+    computeOptimized: boolean; 
+    environmentalImpact?: {
+        weatherDrag: number;
+        refereeVolatility: number;
+    };
 }
 
 export const runMonteCarloSimulation = async (
@@ -36,10 +40,15 @@ export const runMonteCarloSimulation = async (
     physicalCeiling: number,
     homeName: string,
     awayName: string,
-    homeLambda: number = 1.35, // Added for adaptive compute
-    awayMu: number = 1.35,     // Added for adaptive compute
+    homeLambda: number = 1.35, 
+    awayMu: number = 1.35,     
     confidenceVector: number = 0.85, 
-    rho: number = 0 
+    rho: number = 0,
+    homeVolatility: number = 0.5,
+    awayVolatility: number = 0.5,
+    homeStability: number = 0.5,
+    awayStability: number = 0.5,
+    context?: { weather?: string; referee?: string }
 ): Promise<SimulationResult> => {
     let homeWins = 0;
     let draws = 0;
@@ -62,6 +71,14 @@ export const runMonteCarloSimulation = async (
     const iterations = skillGap > 1.75 ? 2000 : 17500;
     const stressIterations = skillGap > 1.75 ? 500 : 2500;
     const batchSize = 2500;
+
+    // --- ENVIRONMENTAL QUANTIFICATION LAYER ---
+    const weatherStr = (context?.weather || '').toLowerCase();
+    const refStr = (context?.referee || '').toLowerCase();
+    
+    const weatherDrag = (weatherStr.includes('rain') || weatherStr.includes('snow') || weatherStr.includes('wind')) ? 0.92 : 1.0;
+    const weatherVol = (weatherStr.includes('storm') || weatherStr.includes('extreme')) ? 0.15 : 0;
+    const refereeVolatility = (refStr.includes('strict') || refStr.includes('cards') || refStr.includes('aggressive')) ? 0.12 : 0;
 
     // Dixon-Coles Tau Adjustment Kernel
     const getTau = (x: number, y: number, lambda: number, mu: number, r: number) => {
@@ -86,18 +103,28 @@ export const runMonteCarloSimulation = async (
         }
 
         const randomFactor = (Math.random() * 0.12 - 0.06) * noiseMultiplier;
+        const totalVol = (weatherVol + refereeVolatility);
         const pathInfluence = path.reduce((acc, p) => acc + (p.confidence * p.intensity), 0) / (path.length * 100);
-        const currentProb = (initialProb / 100 + randomFactor + pathInfluence);
+        const currentProb = (initialProb / 100 + randomFactor + pathInfluence + (totalVol * (Math.random() - 0.5)));
         
         totalProbSum += currentProb;
         squaredProbSum += currentProb * currentProb;
 
-        // Goal Simulation for Market Audit (Anchored to Fortress Floor)
-        const homeLambda = (structuralFloor / 2) * (currentProb * 2);
-        const awayLambda = (structuralFloor / 2) * ((1 - currentProb) * 2);
+        const hVolSignal = (Math.random() * 0.2 - 0.1) * (homeVolatility || 0.5);
+        const aVolSignal = (Math.random() * 0.2 - 0.1) * (awayVolatility || 0.5);
+
+        // Goal Simulation for Market Audit (Anchored to Structural Floor and modulated by Stability)
+        // Probability also influences the Lambda split
+        const hL = (homeLambda * (1 + hVolSignal)) * (0.8 + (1 - (awayStability || 0.5)) * 0.4) * (currentProb * 2);
+        const aM = (awayMu * (1 + aVolSignal)) * (0.8 + (1 - (homeStability || 0.5)) * 0.4) * ((1 - currentProb) * 2);
         
-        const simHomeGoalsRaw = poissonRandom(homeLambda);
-        const simAwayGoalsRaw = poissonRandom(awayLambda);
+        // Final normalization to Structural Floor (Modulated by Weather Drag)
+        const totalExpectancy = hL + aM;
+        const normalizedHL = (hL / (totalExpectancy || 1)) * structuralFloor * weatherDrag;
+        const normalizedAM = (aM / (totalExpectancy || 1)) * structuralFloor * weatherDrag;
+        
+        const simHomeGoalsRaw = poissonRandom(normalizedHL);
+        const simAwayGoalsRaw = poissonRandom(normalizedAM);
         
         // Structural Anchor: Ensure simulated goals respect the Physical Ceiling
         let simHomeGoals = simHomeGoalsRaw;
@@ -109,7 +136,7 @@ export const runMonteCarloSimulation = async (
         }
 
         const totalGoals = simHomeGoals + simAwayGoals;
-        const weight = getTau(simHomeGoals, simAwayGoals, homeLambda, awayLambda, rho);
+        const weight = getTau(simHomeGoals, simAwayGoals, normalizedHL, normalizedAM, rho);
 
         totalWeight += weight;
         totalGoalsSum += totalGoals * weight;
@@ -144,8 +171,9 @@ export const runMonteCarloSimulation = async (
         const disasterDrain = 0.55 - (Math.random() * 0.1); // Brutal drain for Fortress stress
         const stressProb = (initialProb / 100) * disasterDrain;
         
-        const sHomeLambda = (structuralFloor / 2) * (stressProb * 2);
-        const sAwayLambda = (structuralFloor / 2) * ((1 - stressProb) * 2);
+        const totalLM = homeLambda + awayMu;
+        const sHomeLambda = (homeLambda / (totalLM || 1)) * structuralFloor * (stressProb * 2);
+        const sAwayLambda = (awayMu / (totalLM || 1)) * structuralFloor * ((1 - stressProb) * 2);
         
         const sHomeGoalsRaw = poissonRandom(sHomeLambda);
         const sAwayGoalsRaw = poissonRandom(sAwayLambda);
@@ -254,7 +282,11 @@ export const runMonteCarloSimulation = async (
         marketAudits,
         divergence,
         survivalRating,
-        computeOptimized: skillGap > 1.75
+        computeOptimized: skillGap > 1.75,
+        environmentalImpact: {
+            weatherDrag,
+            refereeVolatility
+        }
     };
 };
 

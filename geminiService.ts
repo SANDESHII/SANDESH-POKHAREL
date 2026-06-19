@@ -13,8 +13,10 @@ import {
     runGradientBoostingAudit,
     calculateShannonEntropy,
     calculateEVTRisk,
-    calibrateMatchParameters
+    calibrateMatchParameters,
+    calculateContextualScalar
 } from "./src/services/mathUtils";
+import { findTopTacticalPaths } from "./src/services/viterbiService";
 import { calculateDynamicRho, calculateMarketConfidence } from "./src/services/marketDataService";
 import { IngestionService } from "./src/services/ingestionService";
 import { getTeamBaseline } from "./src/services/baselineDataService";
@@ -35,9 +37,16 @@ interface CircuitState {
     searchExhaustedUntil?: number;
 }
 
+// In-memory grounding cache to preserve search quota
+const GROUNDING_CACHE: Record<string, { data: any, timestamp: number }> = {};
+const GROUNDING_TTL = 30 * 60 * 1000; // 30 minutes
+
+const getMatchCacheKey = (req: { homeTeam: string; awayTeam: string; league: string }) => {
+    return `${req.homeTeam}-${req.awayTeam}-${req.league}`.toLowerCase().replace(/\s+/g, '');
+};
+
 let modelHealth: Record<string, CircuitState> = {
-    ['gemini-3-flash-preview']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 },
-    ['gemini-2.0-flash']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 }
+    ['gemini-3-flash-preview']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 }
 };
 
 let groundingCongestedUntil = 0;
@@ -289,6 +298,8 @@ const teamSchemaProperties = {
     npxG: { type: Type.NUMBER, description: "Primary npxG (Opta/FBref strategy)" },
     npxG_Understat: { type: Type.NUMBER, description: "Secondary npxG for variance check" },
     npxG_SofaScore: { type: Type.NUMBER, description: "Secondary npxG for variance check" },
+    defensiveStability: { type: Type.NUMBER, description: "0.0 (leaky) to 1.0 (impenetrable) metric" },
+    offensiveVolatility: { type: Type.NUMBER, description: "0.0 (consistent) to 1.0 (erratic/explosive) metric" },
     xT: { type: Type.NUMBER, description: "Expected Threat (Steel Data)" },
     form: { type: Type.ARRAY, items: { type: Type.NUMBER } },
     cleanSheets: { type: Type.NUMBER },
@@ -387,12 +398,15 @@ const analysisSchema = {
             properties: {
                 understatBias: { type: Type.NUMBER, description: "Historical scale factor to normalize Understat to Opta baseline for this league" },
                 sofaScoreBias: { type: Type.NUMBER, description: "Historical scale factor to normalize SofaScore to Opta baseline for this league" },
-                calibrationConfidence: { type: Type.NUMBER }
+                calibrationConfidence: { type: Type.NUMBER },
+                aiStructuralFloor: { type: Type.NUMBER, description: "AI suggested goal floor (e.g. 1.0 for under 1.5 matches)" },
+                aiPhysicalCeiling: { type: Type.NUMBER, description: "AI suggested goal ceiling (e.g. 3.5 for fortress matches)" }
             },
             required: ["understatBias", "sofaScoreBias", "calibrationConfidence"]
-        }
+        },
+        ingestedDataSummary: { type: Type.STRING, description: "A high-level summary of the raw data sources and team news found during search to prove ingestion." }
     },
-    required: ["home", "away", "context", "marketReality", "matchSummary", "mirrorMatches", "prosecution", "calibration"]
+    required: ["home", "away", "context", "marketReality", "matchSummary", "mirrorMatches", "prosecution", "calibration", "ingestedDataSummary"]
 };
 
 // --- HELPER LOGIC ---
@@ -412,15 +426,21 @@ const generateAnalysisPrompt = (req: { homeTeam: string; awayTeam: string; leagu
 
     return `INSTRUCTION: PERFORM_FORENSIC_DATA_INGESTION for ${req.homeTeam} vs ${req.awayTeam} (${req.league}).
     Kickoff: ${req.kickoff}. Reference Time: ${now}.
+    
+    DATA_INGESTION_LOCK: You MUST verify the existence of this specific match on today's date (${now.split('T')[0]}) or the closest upcoming date. 
+    If the match does not exist under these names, search for common variations.
+    
     ${baselineContext}
     ${searchInstruction}
 
-    PRIMARY MISSION: Extract high-variance data points (the 'Atoms' of the match).
+    PRIMARY MISSION: Extract and "SIPHON" data into the following mathematical categories:
     
-    --- REQUIRED_DATA_POINTS ---
-    1. LATEST_TEAM_NEWS: Identify key missing starters.
-    2. TACTICAL_SHIFT: Any recent formation changes.
-    3. MOTIVATIONAL_INDEX: Relegation pressure or derby intensity.
+    --- REQUIRED_DATA_POINTS (SIPHON_TARGETS) ---
+    1. LATEST_TEAM_NEWS (Attacking/Defensive Impact): Identify missing starters. Siphon into xG variance.
+    2. TACTICAL_SHIFT (Game State): Siphon into 'regimePath' intensities.
+    3. ENVIRONMENTAL_FACTORS: MANDATORY fetch Matchday Weather (Ingest into 'context.weather') and Referee tendencies (Ingest into 'context.referee').
+    4. MOTIVATIONAL_INDEX: Siphon into 'stakes' and 'confidenceVector'.
+    5. GOAL_BOTTLENECKS: Siphon into 'structuralFloor' vs 'physicalCeiling' anchors.
     
     --- OUTPUT_DISCIPLINE ---
     - Use Baselines as the mathematical floor.
@@ -470,7 +490,8 @@ const generatePseudoAnalysis = (req: { homeTeam: string; awayTeam: string; leagu
         modelMode: 'POISSON_FALLBACK',
         matchContextFlag: 'Standard',
         calibration: { understatBias: 1, sofaScoreBias: 1, calibrationConfidence: 0.8 },
-        groundingStatus: 'DEGRADED'
+        groundingStatus: 'DEGRADED',
+        ingestedDataSummary: "Emergency fallback to Institutional Baselines. Real-time search data stream is currently restricted by system congestion."
     };
 };
 
@@ -502,16 +523,31 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             return null;
         };
 
+        const matchCacheKey = getMatchCacheKey(req);
+        const cachedGrounding = GROUNDING_CACHE[matchCacheKey];
+        const isGroundingCached = cachedGrounding && (Date.now() - cachedGrounding.timestamp < GROUNDING_TTL);
+
+        // Update system health status
+        systemHealthStatus = nowMs > groundingCongestedUntil ? 'OPTIMAL' : 'DEGRADED';
+
         // Execution Strategy Matrix - Smart Multi-Tier Failover
-        // HEURISTIC: Skip search if matchup is well-known and grounding is congested
+        // HEURISTIC: Skip search if matchup is well-known, grounding is congested, or result is cached
         const strategies = [
             { 
-                name: 'FORENSIC_GROUNDING', 
+                name: 'FORENSIC_GROUNDING_3.0', 
                 model: 'gemini-3-flash-preview', 
                 config: { tools: [{ googleSearch: {} }] }, 
                 enableSearch: true,
                 retries: 2, 
-                active: nowMs > groundingCongestedUntil && !isWellKnownMatchup
+                active: nowMs > groundingCongestedUntil && !isWellKnownMatchup && !isGroundingCached
+            },
+            { 
+                name: 'CACHED_GROUNDING_REFRESH_3.0',
+                model: 'gemini-3-flash-preview',
+                config: {},
+                enableSearch: false,
+                retries: 2,
+                active: isGroundingCached
             },
             { 
                 name: 'INSTITUTIONAL_CORE_3.0', 
@@ -519,14 +555,6 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
                 config: {}, 
                 enableSearch: false,
                 retries: 5, 
-                active: true
-            },
-            { 
-                name: 'SAFETY_NET_2.0', 
-                model: 'gemini-2.0-flash', 
-                config: {}, 
-                enableSearch: false,
-                retries: 3, 
                 active: true
             }
         ];
@@ -545,12 +573,16 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
                 console.log(`[ROUTING] Attempting strategy: ${strategy.name} (Search: ${strategy.enableSearch})`);
                 
                 response = await matchQueue.add(async ({ model }) => {
-                    // DYNAMIC PROMPT GENERATION: Adjusts grounding context per strategy
-                    const promptText = generateAnalysisPrompt(req, now, { home: homeBaseline, away: awayBaseline }, strategy.enableSearch);
+                    let finalPrompt = generateAnalysisPrompt(req, now, { home: homeBaseline, away: awayBaseline }, strategy.enableSearch);
                     
+                    // If we have cached grounding, inject it as context to avoid a new search
+                    if (strategy.name === 'CACHED_GROUNDING_REFRESH' && isGroundingCached) {
+                        finalPrompt += `\n\n--- CACHED_MATCH_INTELLIGENCE ---\n${JSON.stringify(cachedGrounding.data)}\n`;
+                    }
+
                     const result = await ai.models.generateContent({
                         model,
-                        contents: [{ role: "user", parts: [{ text: promptText }] }],
+                        contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
                         config: {
                             ...strategy.config,
                             responseMimeType: "application/json",
@@ -563,6 +595,15 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
                 
                 // Success - break the strategy loop
                 console.log(`[ROUTING] Strategy ${strategy.name} succeeded.`);
+                
+                // POPULATE GROUNDING CACHE if search was successful
+                if (strategy.enableSearch && response) {
+                    GROUNDING_CACHE[matchCacheKey] = {
+                        data: response, // Cache the whole response for context injection
+                        timestamp: Date.now()
+                    };
+                }
+
                 groundingStatus = strategy.name === 'FORENSIC_GROUNDING' ? 'OPTIMAL' : 'DEGRADED';
                 break;
             } catch (err: any) {
@@ -571,8 +612,8 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
                 console.warn(`[ROUTING] Strategy ${strategy.name} failed: ${msg}`);
                 
                 if (strategy.enableSearch && (msg.toLowerCase().includes('limit') || msg.toLowerCase().includes('congested') || msg.toLowerCase().includes('grounding') || msg.toUpperCase().includes('QUOTA_EXCEEDED'))) {
-                    groundingCongestedUntil = Date.now() + (20 * 60 * 1000); // 20 min grounding lock on quota or congestion
-                    console.warn(`[ROUTING] Grounding disabled for 20 minutes due to: ${msg}`);
+                    groundingCongestedUntil = Date.now() + (30 * 60 * 1000); // 30 min grounding lock on quota
+                    console.warn(`[ROUTING] Global Grounding Lock Activated (30m) due to: ${msg}`);
                 }
                 
                 // Allow loop to proceed to next strategy
@@ -678,24 +719,47 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
 
         const refinedConfidence = Math.min(data.context.confidenceVector, marketConfidenceAdj);
 
-        const dc = calculateDixonColes(data.homeStats, data.awayStats, req.league, maxVariance, data.marketReality.marketMovementSignal);
-        const regimePath = detectRegimeShifts(dc.alpha, dc.beta, data.homeStats, data.awayStats);
+        // --- QUANTIFICATION LOOP (PERFECTION LAYER) ---
+        const env = calculateContextualScalar(data.context);
+        
+        const dc = calculateDixonColes(
+            data.homeStats, 
+            data.awayStats, 
+            req.league, 
+            maxVariance, 
+            data.marketReality.marketMovementSignal,
+            refinedConfidence
+        );
+        
+        // Final Parametric Adjustment (Environmental and Siphoned variance)
+        let finalAlpha = dc.alpha * env.multiplier;
+        let finalBeta = dc.beta * env.multiplier;
+        
+        // --- PATH PRUNING (VITERBI PROTOCOL) ---
+        // We find the top 3 most likely game narratives and prune to the most statistically probable one.
+        const topPaths = findTopTacticalPaths(finalAlpha, finalBeta, data.homeStats, data.awayStats, 3);
+        const regimePath = topPaths[0].states;
         
         // Use the better Rho from Market Reality
         const finalRho = (marketRho + dc.rho) / 2;
         
-        const math = calculateProbability(data.homeStats, data.awayStats, dc.alpha, dc.beta, finalRho, regimePath);
+        const math = calculateProbability(data.homeStats, data.awayStats, finalAlpha, finalBeta, finalRho, regimePath);
         const structuralData = calculateStructuralFloor(data.homeStats, data.awayStats);
         const physicalCeilingRaw = calculatePhysicalCeiling(data.homeStats, data.awayStats, regimePath);
         
-        let finalFloor = structuralData.floor;
-        let finalCeiling = physicalCeilingRaw;
+        let finalFloor = data.calibration.aiStructuralFloor || structuralData.floor;
+        let finalCeiling = data.calibration.aiPhysicalCeiling || physicalCeilingRaw;
 
         if (data.homeStats.matchHistory && data.awayStats.matchHistory) {
             const cal = calibrateMatchParameters(data.homeStats.matchHistory, data.awayStats.matchHistory);
             finalFloor = (finalFloor * 0.3) + (cal.structuralFloor * 0.7);
             finalCeiling = (finalCeiling * 0.3) + (cal.physicalCeiling * 0.7);
         }
+        
+        // Recalibrate based on AI confidence in bottlenecks
+        if (data.calibration.aiStructuralFloor) finalFloor = (finalFloor + data.calibration.aiStructuralFloor) / 2;
+        if (data.calibration.aiPhysicalCeiling) finalCeiling = (finalCeiling + data.calibration.aiPhysicalCeiling) / 2;
+
 
         const signalPrecision = calculateCredibilitySignal(data.homeStats, data.awayStats); 
         const physics = auditPhysics(data.homeStats, data.awayStats, regimePath);
@@ -721,10 +785,11 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             homeStats: data.homeStats,
             awayStats: data.awayStats,
             sources,
-            homeXG: dc.alpha, // Using Kalman-filtered Alpha
-            awayXG: dc.beta,  // Using Kalman-filtered Beta
+            homeXG: finalAlpha, 
+            awayXG: finalBeta,  
             rho: finalRho,
-            regimePath,
+            regimePath: regimePath,
+            topTacticalPaths: topPaths,
             structuralFloor: finalFloor,
             physicalCeiling: finalCeiling,
             structuralData,
@@ -746,7 +811,8 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             modelMode,
             matchContextFlag: data.matchContextFlag,
             calibration: data.calibration,
-            groundingStatus
+            groundingStatus,
+            ingestedDataSummary: data.ingestedDataSummary
         };
 
         // Store in Cache

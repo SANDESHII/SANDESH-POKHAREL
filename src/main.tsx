@@ -98,10 +98,15 @@ const App: React.FC = () => {
                     ceiling,
                     analysis.homeStats.name,
                     analysis.awayStats.name,
-                    calibratedData?.homeLambda || 1.35,
-                    calibratedData?.awayMu || 1.35,
+                    calibratedData?.homeLambda || analysis.homeXG || 1.35,
+                    calibratedData?.awayMu || analysis.awayXG || 1.35,
                     userConfidence,
-                    analysis.rho
+                    analysis.rho,
+                    analysis.homeStats.offensiveVolatility || 0.5,
+                    analysis.awayStats.offensiveVolatility || 0.5,
+                    analysis.homeStats.defensiveStability || 0.5,
+                    analysis.awayStats.defensiveStability || 0.5,
+                    analysis.context
                 );
                 setSimulation(result);
             }, 50);

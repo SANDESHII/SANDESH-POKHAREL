@@ -35,26 +35,27 @@ export class IngestionService {
         const finalNpxG = Math.min(6.0, Math.max(0.05, consensusNpxG - missingG));
         const finalXT = Math.min(5.0, Math.max(0.05, (team.xT || 0) - missingT));
 
-        // 3. Sequence Rehydration
+        // Sequence rehydration helper
         const rehydrate = (seq: number[] | undefined, fallback: number) => {
             const s = [...(seq || [])]
                 .filter(v => typeof v === 'number' && !isNaN(v))
                 .map(v => Math.max(0.01, v));
-            
-            // Backfill with the current consensus median if telemetry is dropped
             while (s.length < 10) s.unshift(fallback);
             return s.slice(-10);
         };
 
-        const npxGSequence = rehydrate(team.npxGSequence, finalNpxG);
-        const xGASequence = rehydrate(team.xGASequence, team.avgXGA || team.goalsConceded / 10 || 1.1);
+        // 3. Goal Market Calibrations
+        const stability = team.defensiveStability || 0.5;
+        const volatility = team.offensiveVolatility || 0.5;
 
         return {
             ...team,
             npxG: finalNpxG,
             xT: finalXT,
-            npxGSequence,
-            xGASequence,
+            defensiveStability: stability,
+            offensiveVolatility: volatility,
+            npxGSequence: rehydrate(team.npxGSequence, finalNpxG),
+            xGASequence: rehydrate(team.xGASequence, team.avgXGA || team.goalsConceded / 10 || 1.1),
             // Preserve raw values for live covariance tracking
             npxG_Raw: v1,
             npxG_Understat_Standardized: v2,

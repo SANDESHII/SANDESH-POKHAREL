@@ -61,6 +61,36 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety, isOpti
                             <Activity className="w-3 h-3" /> Structural Integrity Visualization
                         </h3>
                         <MatchVisualizer path={analysis.regimePath} />
+                        
+                        {analysis.topTacticalPaths && analysis.topTacticalPaths.length > 1 && (
+                            <div className="pt-4 space-y-4">
+                                <h4 className="text-[10px] font-black uppercase tracking-widest text-emerald-950 flex items-center gap-2">
+                                    // Viterbi Alternative Paths Pruned
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    {analysis.topTacticalPaths.map((path, idx) => (
+                                        <div key={idx} className={`p-4 rounded-xl border ${idx === 0 ? 'bg-emerald-500/5 border-emerald-500/30' : 'bg-zinc-950 border-emerald-900/10 opacity-60'}`}>
+                                            <div className="flex justify-between items-center mb-3">
+                                                <span className="text-[9px] font-black uppercase tracking-tighter text-emerald-900">Path #{idx + 1}</span>
+                                                <span className="text-[8px] font-mono text-emerald-500/40">logP: {path.logProbability.toFixed(1)}</span>
+                                            </div>
+                                            <div className="flex gap-1">
+                                                {path.states.slice(0, 5).map((s, i) => (
+                                                    <div key={i} title={s.regime} className={`h-1.5 flex-1 rounded-full ${
+                                                        s.regime === 'CHAOTIC_DECAY' ? 'bg-red-500' : 
+                                                        s.regime === 'FLUID_TRANSITION' ? 'bg-emerald-400' :
+                                                        s.regime === 'HIGH_SATURATION' ? 'bg-blue-400' : 'bg-emerald-900'
+                                                    }`} />
+                                                ))}
+                                            </div>
+                                            <p className="mt-3 text-[9px] font-bold text-emerald-500/80 uppercase tracking-tight">
+                                                {idx === 0 ? 'PRIMARY_NARRATIVE' : 'VARIANT_SCENARIO'}
+                                            </p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="space-y-6">
@@ -104,6 +134,19 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety, isOpti
                             </div>
                         </div>
                     </div>
+
+                    {analysis.ingestedDataSummary && (
+                        <div className="mt-10 pt-10 border-t border-emerald-900/20 space-y-6">
+                            <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-900 flex items-center gap-2">
+                                <Shield className="w-3 h-3" /> Data Ingestion Audit Proof
+                            </h3>
+                            <div className="bg-emerald-950/20 border border-emerald-900/30 rounded-xl p-6">
+                                <p className="text-xs text-emerald-500/80 font-mono leading-relaxed lowercase italic">
+                                    {analysis.ingestedDataSummary}
+                                </p>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -162,6 +205,30 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety, isOpti
                                 </p>
                             </div>
                         ))}
+                    </div>
+                </div>
+
+                <div className="space-y-6 p-6 bg-zinc-950 border border-emerald-900/30 rounded-2xl shadow-2xl">
+                    <h4 className="text-[10px] uppercase font-black tracking-widest text-emerald-900 flex items-center gap-2">
+                        <Shield className="w-3 h-3" /> Strategic Environment
+                    </h4>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                            <span className="text-[8px] uppercase font-black text-emerald-950 tracking-tighter">Weather</span>
+                            <p className="text-[10px] font-bold text-emerald-500 uppercase">{analysis.context.weather || 'STANDARD'}</p>
+                        </div>
+                        <div className="space-y-1">
+                            <span className="text-[8px] uppercase font-black text-emerald-950 tracking-tighter">Referee</span>
+                            <p className="text-[10px] font-bold text-emerald-500 uppercase">{analysis.context.referee || 'NEUTRAL'}</p>
+                        </div>
+                        <div className="space-y-1">
+                            <span className="text-[8px] uppercase font-black text-emerald-950 tracking-tighter">Pressure</span>
+                            <p className="text-[10px] font-bold text-emerald-500 uppercase">{analysis.context.stakes || 'LEAGUE_FLUID'}</p>
+                        </div>
+                        <div className="space-y-1">
+                            <span className="text-[8px] uppercase font-black text-emerald-950 tracking-tighter">Confidence</span>
+                            <p className="text-[10px] font-bold text-emerald-500 uppercase">{(analysis.context.confidenceVector * 100).toFixed(0)}%</p>
+                        </div>
                     </div>
                 </div>
             </div>

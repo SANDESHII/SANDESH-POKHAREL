@@ -229,23 +229,75 @@ export function calibrateMatchParameters(
 }
 
 /**
+ * 5.3 Contextual Scaling Kernel (Environmental Ingestion)
+ * Quantifies atmospheric and human factors into a structural multiplier.
+ */
+export const calculateContextualScalar = (context?: { weather?: string; referee?: string; stakes?: string }): { multiplier: number; volatility: number } => {
+    let multiplier = 1.0;
+    let volatility = 0.0;
+
+    if (context?.weather) {
+        const w = context.weather.toLowerCase();
+        if (w.includes('rain') || w.includes('snow') || w.includes('wind')) multiplier *= 0.95;
+        if (w.includes('storm') || w.includes('extreme')) {
+            multiplier *= 0.90;
+            volatility += 0.15;
+        }
+    }
+
+    if (context?.referee) {
+        const r = context.referee.toLowerCase();
+        if (r.includes('high cards') || r.includes('strict')) {
+            multiplier *= 0.98; // More stops = less flow
+            volatility += 0.1;
+        }
+        if (r.includes('lenient') || r.includes('fast')) {
+            multiplier *= 1.03;
+        }
+    }
+
+    if (context?.stakes) {
+        const s = context.stakes.toLowerCase();
+        if (s.includes('relegation') || s.includes('final')) {
+            multiplier *= 0.92; // High pressure often leads to defensive conservatism
+            volatility += 0.05;
+        }
+    }
+
+    return { multiplier, volatility };
+};
+
+/**
  * 6. The Dixon-Coles Parameterization (MLE & Rho)
  * Refines the Alpha (Attack) and Beta (Defense) parameters using an iterative MLE loop.
  */
-export const calculateDixonColes = (home: TeamStats, away: TeamStats, league: string = 'UNKNOWN', maxVariance: number = 0.1, marketSignal: number = 0) => {
+export const calculateDixonColes = (
+    home: TeamStats, 
+    away: TeamStats, 
+    league: string = 'UNKNOWN', 
+    maxVariance: number = 0.1, 
+    marketSignal: number = 0,
+    aiConfidence: number = 0.8
+) => {
     // 1. Calculate Dynamic d (League Inertia)
     const highInertiaLeagues = ['PREMIER LEAGUE', 'LA LIGA', 'BUNDESLIGA', 'SERIE A', 'LIGUE 1'];
     const dynamicD = highInertiaLeagues.some(l => league.toUpperCase().includes(l)) ? 0.6 : 0.3;
 
     // 2. Market-Adjusted Confidence
     // If marketSignal is positive, we reduce the noise (R), signaling higher certainty.
-    // If negative, we increase R to account for market skepticism.
-    const marketEffectHome = marketSignal > 0 ? 0.9 : 1.1;
-    const marketEffectAway = marketSignal > 0 ? 0.9 : 1.1;
+    const marketEffect = marketSignal > 0 ? 0.9 : 1.1;
 
     // 3. Calculate Dynamic R (Measurement Noise)
-    const homeR = Math.max(0.05, ((away.avgXGA / 15) + maxVariance) * marketEffectHome);
-    const awayR = Math.max(0.05, ((home.avgXGA / 15) + maxVariance) * marketEffectAway);
+    // Anchored to Decorative Stability, Volatility, and AI Confidence.
+    // Low AI confidence (e.g. 0.2) drastically increases R, making the Kalman filter ignore current noise.
+    const hStab = home.defensiveStability || 0.5;
+    const hVol = home.offensiveVolatility || 0.5;
+    const aStab = away.defensiveStability || 0.5;
+    const aVol = away.offensiveVolatility || 0.5;
+
+    const confidenceNoise = (1 - aiConfidence) * 0.4;
+    const homeR = Math.max(0.05, (((1 - hStab) * 0.2) + (hVol * 0.1) + maxVariance + confidenceNoise) * marketEffect);
+    const awayR = Math.max(0.05, (((1 - aStab) * 0.2) + (aVol * 0.1) + maxVariance + confidenceNoise) * marketEffect);
 
     // 4. Initial State Estimation (Kalman + Neural Memory with Time-Decay)
     const homeMemory = new NeuralMemoryBridge(home.npxG);
@@ -516,24 +568,24 @@ export const auditPhysics = (home: TeamStats, away: TeamStats, path: RegimeState
 
 export const calculateStructuralFloor = (home: TeamStats, away: TeamStats): { floor: number, cushion: number } => {
     // 1. Calculate the Tactical Friction (Defensive Peak)
+    const stability = ((home.defensiveStability || 0.5) + (away.defensiveStability || 0.5)) / 2;
     const defensiveFriction = (home.cleanSheets + away.cleanSheets) / 20;
     const structuralFragility = (home.avgXGA + away.avgXGA) / 4;
     
     // 2. Calculate Offensive Mass (Steel Data)
     const offensiveMass = (home.npxG + away.npxG) * (1 + (home.xT + away.xT) * 0.1);
     
-    // 3. The Law of Mass vs. Friction (3.0 Factor - Stricter)
-    // If mass overwhelms friction by 3.0x, the floor is "Bolted" to an aggressive line.
+    // 3. The Law of Mass vs. Friction (Stability Anchored)
+    // Defensive stability acts as a physical anchor against goal inflation.
     let massMultiplier = 1.0;
-    if (offensiveMass > (defensiveFriction * 3.0)) {
-        massMultiplier = 1.45; // Enhanced Structural escalation (Elite Tier Anchor)
+    if (offensiveMass > (defensiveFriction * 3.0 * stability)) {
+        massMultiplier = 1.45; 
     }
 
     // 4. The Gridlock Law
-    // If defensive friction is at maximum (> 0.75), the floor pivots to an "Under" market anchor.
     let gridlockAdjustment = 0;
-    if (defensiveFriction > 0.8) {
-        gridlockAdjustment = -0.85; // Heavier tightening for total gridlock
+    if (defensiveFriction * stability > 0.6) {
+        gridlockAdjustment = -0.85; 
     }
     
     // 5. Calculate the Friction Coefficient
@@ -541,7 +593,6 @@ export const calculateStructuralFloor = (home: TeamStats, away: TeamStats): { fl
     const floorMultiplier = 1.0 - frictionCoefficient;
 
     // 6. Apply the Calculated Floor (Nuclear Fortress: Anchor for Over 1.5)
-    // Continuous Physics Law: Replace rigid step-gate with smooth mathematical slope
     const massExcess = Math.max(0, offensiveMass - 2.2);
     const fortressBooster = Math.min(0.45, massExcess * 0.15) + (structuralFragility > 1.2 ? 0.1 : 0);
     
@@ -551,7 +602,7 @@ export const calculateStructuralFloor = (home: TeamStats, away: TeamStats): { fl
     const cushion = Math.max(0.5, baseFloor - 1.15);
     
     return {
-        floor: Math.max(0.5, baseFloor + (structuralFragility * 0.4) - (defensiveFriction * 0.6)),
+        floor: Math.max(0.5, baseFloor + (structuralFragility * 0.4) - (defensiveFriction * 0.6 * stability)),
         cushion: Math.max(0.5, cushion)
     };
 };
@@ -563,14 +614,14 @@ export const calculateStructuralFloor = (home: TeamStats, away: TeamStats): { fl
 export const calculatePhysicalCeiling = (home: TeamStats, away: TeamStats, regimes: RegimeState[]): number => {
     const defensiveMass = (home.cleanSheets + away.cleanSheets) / 2;
     const avgIntensity = regimes.reduce((acc, r) => acc + r.intensity, 0) / regimes.length;
+    const volatility = ((home.offensiveVolatility || 0.5) + (away.offensiveVolatility || 0.5)) / 2;
     
-    // Smoothly scale the ceiling based on tactical saturation.
-    // High Intensity + Low Defensive Mass = High Ceiling.
+    // Smoothly scale the ceiling based on tactical saturation and volatility.
     const intensityWeight = Math.tanh((avgIntensity - 50) / 20);
     const massWeight = Math.tanh((defensiveMass - 1) / 2);
     
-    // Ceiling starts at 3.5 and deviates based on the interaction.
-    let ceiling = 3.5 + (intensityWeight * 1.5) - (massWeight * 0.8);
+    // Ceiling deviates based on intensity, defense, and volatility.
+    let ceiling = 3.5 + (intensityWeight * 1.5) - (massWeight * 0.8) + (volatility * 0.5);
     
     // Add a small "Chaos Premium" for frequent regime shifts
     const regimeShifts = regimes.filter((r, i) => i > 0 && r.regime !== regimes[i-1].regime).length;

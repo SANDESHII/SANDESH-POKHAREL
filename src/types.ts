@@ -16,6 +16,8 @@ export interface TeamStats {
     avgXGA: number;
     npxG: number; 
     xT: number;   
+    defensiveStability?: number;
+    offensiveVolatility?: number;
     form: number[];
     cleanSheets: number;
     // New metrics for variance and context
@@ -68,6 +70,11 @@ export interface ProsecutionCase {
     riskScore: number;
 }
 
+export interface ViterbiPath {
+    states: RegimeState[];
+    logProbability: number;
+}
+
 export interface AnalysisResult {
     probability: number;
     summary: string;
@@ -78,6 +85,7 @@ export interface AnalysisResult {
     awayXG: number;
     rho: number;
     regimePath: RegimeState[];
+    topTacticalPaths?: ViterbiPath[];
     structuralFloor: number;
     physicalCeiling: number;
     structuralData: { floor: number, cushion: number };
@@ -95,12 +103,15 @@ export interface AnalysisResult {
     matchContextFlag?: 'Dead-Rubber' | 'Derby' | 'Standard';
     calibration?: CalibrationMatrix;
     groundingStatus?: 'OPTIMAL' | 'DEGRADED' | 'FAILED';
+    ingestedDataSummary?: string;
 }
 
 export interface CalibrationMatrix {
     understatBias: number;
     sofaScoreBias: number;
     calibrationConfidence: number;
+    aiStructuralFloor?: number;
+    aiPhysicalCeiling?: number;
 }
 
 export interface ModelAudit {
