@@ -54,6 +54,7 @@ export class IngestionService {
             xT: finalXT,
             defensiveStability: stability,
             offensiveVolatility: volatility,
+            form: team.form || rehydrate(team.npxGSequence, finalNpxG),
             npxGSequence: rehydrate(team.npxGSequence, finalNpxG),
             xGASequence: rehydrate(team.xGASequence, team.avgXGA || team.goalsConceded / 10 || 1.1),
             // Preserve raw values for live covariance tracking

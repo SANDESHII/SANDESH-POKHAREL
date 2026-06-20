@@ -7,6 +7,30 @@
   <title>Match Report | Data-Driven Football Analysis</title>
   <link rel="stylesheet" href="/src/index.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <script>
+    (function() {
+      const suppressStrings = ['WebSocket', 'vite', 'hmr', 'hot-update', 'sockjs'];
+      const originalError = console.error;
+      const originalWarn = console.warn;
+      console.error = function() {
+        const msg = String(arguments[0] || '');
+        if (suppressStrings.some(s => msg.includes(s))) return;
+        originalError.apply(console, arguments);
+      };
+      console.warn = function() {
+        const msg = String(arguments[0] || '');
+        if (suppressStrings.some(s => msg.includes(s))) return;
+        originalWarn.apply(console, arguments);
+      };
+      window.addEventListener('unhandledrejection', function(event) {
+        const reason = String(event.reason?.message || event.reason || '');
+        if (suppressStrings.some(s => reason.includes(s))) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
+    })();
+  </script>
 </head>
 <body>
   <div id="root"></div>

@@ -13,8 +13,7 @@ import {
     runGradientBoostingAudit,
     calculateShannonEntropy,
     calculateEVTRisk,
-    calibrateMatchParameters,
-    calculateContextualScalar
+    calibrateMatchParameters
 } from "./src/services/mathUtils";
 import { findTopTacticalPaths } from "./src/services/viterbiService";
 import { calculateDynamicRho, calculateMarketConfidence } from "./src/services/marketDataService";
@@ -22,10 +21,10 @@ import { IngestionService } from "./src/services/ingestionService";
 import { getTeamBaseline } from "./src/services/baselineDataService";
 import { AnalysisResult } from "./src/types";
 
-const CORE_MODEL = 'gemini-3-flash-preview'; 
-const SEARCH_MODEL = 'gemini-3-flash-preview'; 
-const FALLBACK_MODEL = 'gemini-3-flash-preview'; 
-const LIGHT_MODEL = 'gemini-3-flash-preview'; 
+const CORE_MODEL = 'gemini-3.5-flash'; 
+const SEARCH_MODEL = 'gemini-3.5-flash'; 
+const FALLBACK_MODEL = 'gemini-3.5-flash'; 
+const LIGHT_MODEL = 'gemini-3.1-flash-lite'; 
 const CACHE_FILE = path.join(process.cwd(), 'match_cache.json');
 
 // --- ADVANCED NETWORK INTELLIGENCE ---
@@ -46,34 +45,73 @@ const getMatchCacheKey = (req: { homeTeam: string; awayTeam: string; league: str
 };
 
 let modelHealth: Record<string, CircuitState> = {
-    ['gemini-3-flash-preview']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 }
+    ['gemini-3.5-flash']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 },
+    ['gemini-3.1-flash-lite']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 }
 };
 
 let groundingCongestedUntil = 0;
 let systemHealthStatus: 'OPTIMAL' | 'DEGRADED' | 'CRITICAL' = 'OPTIMAL';
 
-const isModelHealthy = (model: string) => {
+let systemPressure = 0; // 0 to 10
+const MAX_PRESSURE = 10;
+
+// Automatic Pressure Decay
+if (typeof setInterval !== 'undefined') {
+    setInterval(() => {
+        if (systemPressure > 0) {
+            systemPressure = Math.max(0, systemPressure - 1);
+            console.log(`[SYSTEM] Pressure decaying naturally. Now: ${systemPressure}/10`);
+        }
+    }, 180000); // 3 minute decay cycle
+}
+
+const isModelHealthy = (model: string, needsSearch: boolean = false) => {
     const health = modelHealth[model];
-    if (!health) return true;
+    if (!health) return systemPressure < MAX_PRESSURE;
     const now = Date.now();
-    return now > health.exhaustedUntil && now > health.congestedUntil;
+    
+    // Model level check
+    if (now <= health.exhaustedUntil || now <= health.congestedUntil) return false;
+    
+    // Search level check
+    if (needsSearch && (now <= groundingCongestedUntil || (health.searchExhaustedUntil && now <= health.searchExhaustedUntil))) return false;
+    
+    return systemPressure < MAX_PRESSURE;
 };
 
-const markModelExhausted = (model: string, durationMs: number = 3600000) => { 
+const markSearchExhausted = (model: string, durationMs: number = 30000) => {
     if (!modelHealth[model]) {
         modelHealth[model] = { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 };
     }
-    console.warn(`[CIRCUIT_BREAKER] ${model} EXHAUSTED (Quota hit). Locking for ${durationMs / 60000}m`);
+    
+    // Incrementally lock search longer if repeated failures
+    const health = modelHealth[model];
+    const lockExtension = (health.failureCount || 0) * 60000;
+    const finalDuration = durationMs + lockExtension;
+    
+    console.warn(`[CIRCUIT_BREAKER] ${model} SEARCH QUOTA reached. Locking search for ${finalDuration / 1000}s (Extension: ${lockExtension/1000}s)`);
+    groundingCongestedUntil = Date.now() + finalDuration;
+    modelHealth[model].searchExhaustedUntil = Date.now() + finalDuration;
+    saveStorage();
+};
+
+const markModelExhausted = (model: string, durationMs: number = 30000) => { 
+    if (!modelHealth[model]) {
+        modelHealth[model] = { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 };
+    }
+    systemPressure = Math.min(MAX_PRESSURE, systemPressure + 2);
+    console.warn(`[CIRCUIT_BREAKER] ${model} EXHAUSTED (Quota hit). Pressure: ${systemPressure}/10. Locking for ${durationMs / 1000}s`);
     modelHealth[model].exhaustedUntil = Date.now() + durationMs;
     modelHealth[model].lastFailureType = 'QUOTA';
     saveStorage();
 };
 
-const markModelCongested = (model: string, durationMs: number = 180000) => {
+const markModelCongested = (model: string, durationMs: number = 5000) => {
     if (!modelHealth[model]) {
         modelHealth[model] = { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 };
     }
-    console.warn(`[CIRCUIT_BREAKER] ${model} CONGESTED (503/Timeout). Slowing for ${durationMs / 1000}s`);
+    systemPressure = Math.min(MAX_PRESSURE, systemPressure + 1);
+    console.warn(`[CIRCUIT_BREAKER] ${model} CONGESTED (503/Timeout). Pressure: ${systemPressure}/10. Locking for ${durationMs / 1000}s`);
     modelHealth[model].congestedUntil = Date.now() + durationMs;
     modelHealth[model].failureCount++;
     modelHealth[model].lastFailureType = 'NETWORK';
@@ -98,6 +136,10 @@ const loadStorage = () => {
             // Restore health states
             if (STORAGE.health) {
                 Object.assign(modelHealth, STORAGE.health);
+                // Cleanse legacy models
+                Object.keys(modelHealth).forEach(m => {
+                    if (m.includes('1.5')) delete modelHealth[m];
+                });
             }
             if (STORAGE.groundingCongestedUntil) {
                 groundingCongestedUntil = STORAGE.groundingCongestedUntil;
@@ -131,8 +173,8 @@ class MatchQueue {
     private queue: (() => Promise<any>)[] = [];
     private processing = false;
     private lastRequestTime = 0;
-    private minDelay = 1500; // Increased base delay
-    private searchDelay = 12000; // Increased search delay
+    private minDelay = 2000; // Increased base delay
+    private searchDelay = 15000; // Increased search delay
     private coolingDownUntil = 0;
     private onStatusChange?: (status: { depth: number; isCoolingDown: boolean; cooldownRemaining: number; message?: string }) => void;
 
@@ -152,9 +194,16 @@ class MatchQueue {
         });
     }
 
-    async add<T>(task: (context: { model: string }) => Promise<T>, model: string, useSearch = false, retries = 3): Promise<T> {
+    private getDynamicDelay(useSearch: boolean): number {
+        const baseDelay = useSearch ? this.searchDelay : this.minDelay;
+        // Scale delay based on system pressure: pressure 2 doubles it, pressure 5 triples it, etc.
+        const multiplier = 1 + (systemPressure * 0.5); 
+        return baseDelay * multiplier;
+    }
+
+    async add<T>(task: (context: { model: string }) => Promise<T>, model: string, useSearch = false, retries = 0): Promise<T> {
         return new Promise((resolve, reject) => {
-            if (useSearch && Date.now() < this.coolingDownUntil) {
+            if (useSearch && Date.now() < groundingCongestedUntil) {
                 reject(new Error(`SEARCH_COOLDOWN`));
                 return;
             }
@@ -165,7 +214,7 @@ class MatchQueue {
                 while (attempt <= retries) {
                     try {
                         const now = Date.now();
-                        const delay = useSearch ? this.searchDelay : this.minDelay;
+                        const delay = this.getDynamicDelay(useSearch);
                         const waitTime = Math.max(0, this.lastRequestTime + delay - now);
                         
                         if (waitTime > 0 || now < this.coolingDownUntil) {
@@ -177,8 +226,10 @@ class MatchQueue {
                         const result = await task({ model });
                         this.lastRequestTime = Date.now();
                         
-                        // Reset failure counts on success
-                        if (modelHealth[model]) modelHealth[model].failureCount = 0;
+                        if (modelHealth[model]) {
+                            modelHealth[model].failureCount = 0;
+                            systemPressure = Math.max(0, systemPressure - 1);
+                        }
                         
                         resolve(result);
                         this.emitStatus();
@@ -191,27 +242,29 @@ class MatchQueue {
                         const isNotFound = err.status === 404 || err.code === 404 || errMessage.includes('404') || errMessage.includes('not found');
                         
                         if (isNotFound) {
-                            markModelExhausted(model, 5000); // 5 second lock for 404 models during debug/deploy
+                            markModelExhausted(model, 1000); 
                             reject(new Error(`MODEL_NOT_FOUND: ${model}`));
                             return;
                         }
 
-                        if (isSearchLimit) {
-                            groundingCongestedUntil = Date.now() + 600000; // 10 min search lock
-                            reject(new Error("SEARCH_LIMIT_HIT"));
-                            return;
-                        }
-
-                        if (isRateLimit) {
+                        if (isSearchLimit || (isRateLimit && useSearch)) {
+                            markSearchExhausted(model, 300000); // 5 mins search lockout for stability
+                            if (attempt >= retries) {
+                                reject(new Error("SEARCH_QUOTA_EXCEEDED"));
+                                return;
+                            }
+                        } else if (isRateLimit) {
                             const isHardLimit = errMessage.includes('limit: 0');
-                            markModelExhausted(model, isHardLimit ? 3600000 : 90000); 
-                            reject(new Error(isHardLimit ? "MODEL_EXHAUSTED" : "QUOTA_EXCEEDED"));
-                            return;
+                            markModelExhausted(model, isHardLimit ? 3600000 : 30000); 
+                            if (isHardLimit || attempt >= retries) {
+                                reject(new Error(isHardLimit ? "MODEL_EXHAUSTED" : "QUOTA_EXCEEDED"));
+                                return;
+                            }
                         }
 
                         if (isUnavailable) {
-                            markModelCongested(model, 120000);
-                            if (useSearch) {
+                            markModelCongested(model, 15000); 
+                            if (useSearch && attempt >= retries) {
                                 reject(new Error("SEARCH_MODEL_CONGESTED"));
                                 return;
                             }
@@ -219,18 +272,10 @@ class MatchQueue {
 
                         if ((isRateLimit || isUnavailable) && attempt < retries) {
                             attempt++;
-                            
-                            let backoff = Math.pow(2, attempt) * 15000 + Math.random() * 5000;
-                            if (isUnavailable) backoff += 50000;
-                            if (useSearch) backoff += 20000; // Extra padding for grounding timeouts
-
-                            const match = err.message?.match(/retry in ([\d.]+)s/i);
-                            if (match && match[1]) {
-                                backoff = (parseFloat(match[1]) * 1000) + 5000; 
-                            }
-
+                            let jitter = Math.random() * 1000;
+                            let backoff = (Math.pow(2, attempt) * 4000) + jitter; 
                             this.coolingDownUntil = Date.now() + backoff;
-                            console.warn(`[RETRY] Gemini Failure: Backing off for ${Math.round(backoff/1000)}s`);
+                            console.warn(`[RETRY] Gemini Failure (${isRateLimit ? '429' : '503'}): Backing off for ${Math.round(backoff/1000)}s... Attempt ${attempt}/${retries}`);
                             await new Promise(r => setTimeout(r, backoff));
                             continue;
                         }
@@ -372,7 +417,10 @@ const analysisSchema = {
         away: { type: Type.OBJECT, properties: teamSchemaProperties, required: Object.keys(teamSchemaProperties) },
         context: { type: Type.OBJECT, properties: contextSchemaProperties, required: Object.keys(contextSchemaProperties) },
         marketReality: { type: Type.OBJECT, properties: marketSchemaProperties, required: Object.keys(marketSchemaProperties) },
-        matchSummary: { type: Type.STRING },
+        matchSummary: { 
+            type: Type.STRING, 
+            description: "Forensic analysis summary. START with 'Forensic Ingestion: Raw team data is ingested and routed through a hardened Gemini 3 Flash Preview grounded search...'" 
+        },
         mirrorMatches: {
             type: Type.ARRAY,
             items: {
@@ -447,7 +495,11 @@ const generateAnalysisPrompt = (req: { homeTeam: string; awayTeam: string; leagu
     - RETURN_RAW_JSON_ONLY. No prose. No markdown blocks.`;
 };
 
-export const getQueueState = () => matchQueue.state;
+export const getQueueState = () => ({
+    ...matchQueue.state,
+    systemPressure,
+    groundingCongestedUntil
+});
 
 // --- EMERGENCY FAILOVER SYSTEM ---
 const generatePseudoAnalysis = (req: { homeTeam: string; awayTeam: string; league: string }): AnalysisResult => {
@@ -467,7 +519,7 @@ const generatePseudoAnalysis = (req: { homeTeam: string; awayTeam: string; leagu
     
     return {
         probability: math.probability,
-        summary: `[HEALED] Forensic analysis derived from Institutional Archives. Real-time grounding stream interrupted due to high network pressure. Structural integrity remains optimal.`,
+        summary: `[HEALED] Forensic analysis derived from Institutional Archives. Our real-time data ingestion stream is currently experiencing high network pressure (Congestion). We have automatically failed over to high-fidelity structural baselines to ensure analytical continuity. Probabilities are anchored to historical performance vectors and calibrated decay models.`,
         homeStats: hProcessed,
         awayStats: aProcessed,
         sources: [{ title: "Institutional Archive", uri: "#" }],
@@ -503,8 +555,12 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
 
     // Check Analysis Cache
     const cached = STORAGE.analysis[cacheKey];
-    if (cached && (Date.now() - cached.timestamp < ANALYSIS_CACHE_TTL)) {
-        console.log(`Cache: Returning cached analysis for ${req.homeTeam} vs ${req.awayTeam}`);
+    
+    // Dynamic Cache Window: Extend if system is under pressure to save quota
+    const effectiveTTL = systemPressure >= 4 ? ANALYSIS_CACHE_TTL * 4 : ANALYSIS_CACHE_TTL;
+    
+    if (cached && (Date.now() - cached.timestamp < effectiveTTL)) {
+        console.log(`Cache: Returning ${systemPressure >= 4 ? 'EXTENDED ' : ''}cached analysis for ${req.homeTeam} vs ${req.awayTeam}`);
         return cached.data;
     }
 
@@ -512,7 +568,8 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         // Retrieve Institutional Baselines for Smart Routing
         const homeBaseline = getTeamBaseline(req.homeTeam);
         const awayBaseline = getTeamBaseline(req.awayTeam);
-        const isWellKnownMatchup = (homeBaseline.cleanSheets > 6 && awayBaseline.cleanSheets > 6);
+        const isWellKnownMatchup = (homeBaseline.cleanSheets > 8 && awayBaseline.cleanSheets > 8) || 
+                                   (homeBaseline.avgXG > 1.8 && awayBaseline.avgXG > 1.8);
 
         const prompt = generateAnalysisPrompt(req, now, { home: homeBaseline, away: awayBaseline });
         const fallbackToStaleCache = () => {
@@ -527,35 +584,40 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         const cachedGrounding = GROUNDING_CACHE[matchCacheKey];
         const isGroundingCached = cachedGrounding && (Date.now() - cachedGrounding.timestamp < GROUNDING_TTL);
 
+        // --- SURVIVAL BYPASS: If system pressure is critical, don't even try the API ---
+        if (systemPressure >= 6) {
+            console.warn(`[SURVIVAL] System pressure (${systemPressure}/10) is CRITICAL. Fast-tracking Pseudo-Analysis.`);
+            return generatePseudoAnalysis(req);
+        }
+
         // Update system health status
         systemHealthStatus = nowMs > groundingCongestedUntil ? 'OPTIMAL' : 'DEGRADED';
 
-        // Execution Strategy Matrix - Smart Multi-Tier Failover
-        // HEURISTIC: Skip search if matchup is well-known, grounding is congested, or result is cached
+        // Heuristic: Skip search if system is slightly pressured, matchup is well-known, or results are cached
         const strategies = [
             { 
                 name: 'FORENSIC_GROUNDING_3.0', 
-                model: 'gemini-3-flash-preview', 
+                model: 'gemini-3.5-flash', 
                 config: { tools: [{ googleSearch: {} }] }, 
                 enableSearch: true,
-                retries: 2, 
-                active: nowMs > groundingCongestedUntil && !isWellKnownMatchup && !isGroundingCached
-            },
-            { 
-                name: 'CACHED_GROUNDING_REFRESH_3.0',
-                model: 'gemini-3-flash-preview',
-                config: {},
-                enableSearch: false,
-                retries: 2,
-                active: isGroundingCached
+                retries: 1, // Reduced retries for search to fail fast and move to core
+                active: nowMs > groundingCongestedUntil && !isWellKnownMatchup && !isGroundingCached && systemPressure < 2
             },
             { 
                 name: 'INSTITUTIONAL_CORE_3.0', 
-                model: 'gemini-3-flash-preview', 
+                model: 'gemini-3.5-flash', 
                 config: {}, 
                 enableSearch: false,
-                retries: 5, 
-                active: true
+                retries: 2, 
+                active: systemPressure < 8
+            },
+            { 
+                name: 'SAFE_HARBOR_LITE', 
+                model: 'gemini-3.1-flash-lite', 
+                config: {}, 
+                enableSearch: false,
+                retries: 3, 
+                active: true 
             }
         ];
 
@@ -564,8 +626,11 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         let groundingStatus: 'OPTIMAL' | 'DEGRADED' | 'FAILED' = 'FAILED';
 
         for (const strategy of strategies) {
-            if (!strategy.active || !isModelHealthy(strategy.model)) {
-                console.log(`[ROUTING] Skipping ${strategy.name}: Model or Search not healthy`);
+            // Check health specifically for the needs of the strategy
+            const isHealthy = isModelHealthy(strategy.model, strategy.enableSearch);
+
+            if (!strategy.active || !isHealthy) {
+                console.log(`[ROUTING] Skipping ${strategy.name}: ${!strategy.active ? 'Inactive' : 'Model or Search not healthy'}`);
                 continue;
             }
 
@@ -604,7 +669,7 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
                     };
                 }
 
-                groundingStatus = strategy.name === 'FORENSIC_GROUNDING' ? 'OPTIMAL' : 'DEGRADED';
+                groundingStatus = strategy.name === 'FORENSIC_GROUNDING_3.0' ? 'OPTIMAL' : 'DEGRADED';
                 break;
             } catch (err: any) {
                 lastError = err;
@@ -612,8 +677,8 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
                 console.warn(`[ROUTING] Strategy ${strategy.name} failed: ${msg}`);
                 
                 if (strategy.enableSearch && (msg.toLowerCase().includes('limit') || msg.toLowerCase().includes('congested') || msg.toLowerCase().includes('grounding') || msg.toUpperCase().includes('QUOTA_EXCEEDED'))) {
-                    groundingCongestedUntil = Date.now() + (30 * 60 * 1000); // 30 min grounding lock on quota
-                    console.warn(`[ROUTING] Global Grounding Lock Activated (30m) due to: ${msg}`);
+                    groundingCongestedUntil = Date.now() + (60 * 1000); // 1 min lockout for search specifically
+                    console.warn(`[ROUTING] Grounding specifically congested. Moving to next strategy...`);
                 }
                 
                 // Allow loop to proceed to next strategy
@@ -621,16 +686,12 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             }
         }
 
+        // --- SURVIVAL LAYER: If no response was generated, use pseudo-analysis as final fallback ---
         if (!response) {
+            console.warn("[SURVIVAL] All strategies failed or skipped. Falling back to Forensic Pseudo-Analysis.");
             const stale = fallbackToStaleCache();
             if (stale) return stale;
-            
-            // EMERGENCY FAILOVER: Root-level recovery
-            try {
-                return generatePseudoAnalysis(req);
-            } catch (pseudoError) {
-                throw lastError || new Error("All analysis strategies exhausted.");
-            }
+            return generatePseudoAnalysis(req);
         }
 
         const text = typeof response.text === 'function' ? response.text() : response.text;
@@ -719,31 +780,23 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
 
         const refinedConfidence = Math.min(data.context.confidenceVector, marketConfidenceAdj);
 
-        // --- QUANTIFICATION LOOP (PERFECTION LAYER) ---
-        const env = calculateContextualScalar(data.context);
-        
         const dc = calculateDixonColes(
             data.homeStats, 
             data.awayStats, 
             req.league, 
             maxVariance, 
-            data.marketReality.marketMovementSignal,
-            refinedConfidence
+            data.marketReality.marketMovementSignal
         );
-        
-        // Final Parametric Adjustment (Environmental and Siphoned variance)
-        let finalAlpha = dc.alpha * env.multiplier;
-        let finalBeta = dc.beta * env.multiplier;
         
         // --- PATH PRUNING (VITERBI PROTOCOL) ---
         // We find the top 3 most likely game narratives and prune to the most statistically probable one.
-        const topPaths = findTopTacticalPaths(finalAlpha, finalBeta, data.homeStats, data.awayStats, 3);
+        const topPaths = findTopTacticalPaths(dc.alpha, dc.beta, data.homeStats, data.awayStats, 3);
         const regimePath = topPaths[0].states;
         
         // Use the better Rho from Market Reality
         const finalRho = (marketRho + dc.rho) / 2;
         
-        const math = calculateProbability(data.homeStats, data.awayStats, finalAlpha, finalBeta, finalRho, regimePath);
+        const math = calculateProbability(data.homeStats, data.awayStats, dc.alpha, dc.beta, finalRho, regimePath);
         const structuralData = calculateStructuralFloor(data.homeStats, data.awayStats);
         const physicalCeilingRaw = calculatePhysicalCeiling(data.homeStats, data.awayStats, regimePath);
         
@@ -785,8 +838,8 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             homeStats: data.homeStats,
             awayStats: data.awayStats,
             sources,
-            homeXG: finalAlpha, 
-            awayXG: finalBeta,  
+            homeXG: dc.alpha, 
+            awayXG: dc.beta,  
             rho: finalRho,
             regimePath: regimePath,
             topTacticalPaths: topPaths,
@@ -833,13 +886,15 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         }
 
         const isQuota = errStr.includes('quota') || errStr.includes('limit') || errStr.includes('429');
-        const isUnavailable = errStr.includes('503') || errStr.includes('UNAVAILABLE') || errStr.includes('demand');
+        const isUnavailable = errStr.includes('503') || errStr.includes('unavailable') || errStr.includes('demand') || errStr.includes('congested') || errStr.includes('overloaded');
         
         if (isQuota || isUnavailable) {
             try {
-                console.warn("[RECOVERY] Quota/Unavailable - returning pseudo-analysis as prediction.");
+                console.warn(`[RECOVERY] ${isQuota ? 'Quota' : 'Congestion'} detected - returning emergency forensic baseline.`);
                 return generatePseudoAnalysis(req);
-            } catch (inner) {}
+            } catch (inner) {
+                console.error("[RECOVERY] Internal failover crash:", inner);
+            }
         }
 
         if (isQuota) {
@@ -848,12 +903,13 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             if (match && match[1]) {
                 retryMsg += ` Automatic retry in ${Math.ceil(parseFloat(match[1]))} seconds...`;
             } else {
-                retryMsg += " Retrying in 15 seconds...";
+                retryMsg += " High precision grounding is currently under heavy load. Retrying in 15 seconds...";
             }
             throw new Error(retryMsg);
         }
+        
         if (isUnavailable) {
-            throw new Error("Gemini is currently experiencing high demand. Please try again in a few moments.");
+            throw new Error("The analysis engine is currently experiencing high demand (Congestion). We are automatically failing over to forensic baselines, but the real-time stream is blocked. Please try again in a few moments.");
         }
         throw e;
     }

@@ -75,6 +75,13 @@ export interface ViterbiPath {
     logProbability: number;
 }
 
+export interface BatchItem {
+    homeTeam: string;
+    awayTeam: string;
+    league: string;
+    kickoff: string;
+}
+
 export interface AnalysisResult {
     probability: number;
     summary: string;

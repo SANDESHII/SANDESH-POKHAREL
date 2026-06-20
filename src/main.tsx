@@ -1,6 +1,31 @@
 
 import './index.css';
 import React, { useState, useEffect, useMemo } from 'react';
+
+// Suppress benign WebSocket HMR noise in the shared/preview environment
+if (typeof window !== 'undefined') {
+    const originalError = console.error;
+    const originalWarn = console.warn;
+    
+    console.error = (...args) => {
+        const msg = String(args[0] || '');
+        if (msg.includes('WebSocket') || msg.includes('vite') || msg.includes('hmr')) return;
+        originalError.apply(console, args);
+    };
+
+    console.warn = (...args) => {
+        const msg = String(args[0] || '');
+        if (msg.includes('WebSocket') || msg.includes('vite') || msg.includes('hmr')) return;
+        originalWarn.apply(console, args);
+    };
+
+    window.addEventListener('unhandledrejection', (event) => {
+        const reason = event.reason?.message || String(event.reason || '');
+        if (reason.includes('WebSocket') || reason.includes('vite')) {
+            event.preventDefault();
+        }
+    });
+}
 import { createRoot } from 'react-dom/client';
 import { motion } from 'motion/react';
 import { 
@@ -133,13 +158,14 @@ const App: React.FC = () => {
     }, [analysis, simulation]);
 
     const handleAnalyze = async () => {
-        // UI_STATE_GATE: Prevent concurrent analysis collisions
         if (loadingAnalysis || !homeInput || !awayInput) return;
-        setLoadingAnalysis(true);
-        setLoadingStage(0); // Reset progress indicators
-        setAnalysis(null); 
-        setSimulation(null);
+        
         setError(null);
+        setLoadingAnalysis(true);
+        setLoadingStage(0);
+        setAnalysis(null);
+        setSimulation(null);
+
         try {
             const response = await fetch('/api/analyze', {
                 method: 'POST',
@@ -154,7 +180,7 @@ const App: React.FC = () => {
 
             if (!response.ok) {
                 const errData = await response.json();
-                throw new Error(errData.error || 'ANALYSIS FAILED TO RETURN VALID DATA.');
+                throw new Error(errData.error || 'ANALYSIS FAILED.');
             }
 
             const result: AnalysisResult = await response.json();
@@ -221,13 +247,14 @@ const App: React.FC = () => {
                     <motion.div
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="animate-in fade-in slide-in-from-bottom-4 duration-1000"
+                        className="space-y-16 animate-in fade-in slide-in-from-bottom-4 duration-1000"
                     >
                         <ResultGrid 
                             analysis={analysis} 
                             surety={surety} 
                             isOptimized={simulation?.computeOptimized} 
                         />
+                        <LogPanel analysis={analysis} />
                     </motion.div>
                 )}
             </main>

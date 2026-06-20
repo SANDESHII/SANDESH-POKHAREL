@@ -229,45 +229,6 @@ export function calibrateMatchParameters(
 }
 
 /**
- * 5.3 Contextual Scaling Kernel (Environmental Ingestion)
- * Quantifies atmospheric and human factors into a structural multiplier.
- */
-export const calculateContextualScalar = (context?: { weather?: string; referee?: string; stakes?: string }): { multiplier: number; volatility: number } => {
-    let multiplier = 1.0;
-    let volatility = 0.0;
-
-    if (context?.weather) {
-        const w = context.weather.toLowerCase();
-        if (w.includes('rain') || w.includes('snow') || w.includes('wind')) multiplier *= 0.95;
-        if (w.includes('storm') || w.includes('extreme')) {
-            multiplier *= 0.90;
-            volatility += 0.15;
-        }
-    }
-
-    if (context?.referee) {
-        const r = context.referee.toLowerCase();
-        if (r.includes('high cards') || r.includes('strict')) {
-            multiplier *= 0.98; // More stops = less flow
-            volatility += 0.1;
-        }
-        if (r.includes('lenient') || r.includes('fast')) {
-            multiplier *= 1.03;
-        }
-    }
-
-    if (context?.stakes) {
-        const s = context.stakes.toLowerCase();
-        if (s.includes('relegation') || s.includes('final')) {
-            multiplier *= 0.92; // High pressure often leads to defensive conservatism
-            volatility += 0.05;
-        }
-    }
-
-    return { multiplier, volatility };
-};
-
-/**
  * 6. The Dixon-Coles Parameterization (MLE & Rho)
  * Refines the Alpha (Attack) and Beta (Defense) parameters using an iterative MLE loop.
  */
@@ -276,28 +237,24 @@ export const calculateDixonColes = (
     away: TeamStats, 
     league: string = 'UNKNOWN', 
     maxVariance: number = 0.1, 
-    marketSignal: number = 0,
-    aiConfidence: number = 0.8
+    marketSignal: number = 0
 ) => {
     // 1. Calculate Dynamic d (League Inertia)
     const highInertiaLeagues = ['PREMIER LEAGUE', 'LA LIGA', 'BUNDESLIGA', 'SERIE A', 'LIGUE 1'];
     const dynamicD = highInertiaLeagues.some(l => league.toUpperCase().includes(l)) ? 0.6 : 0.3;
 
     // 2. Market-Adjusted Confidence
-    // If marketSignal is positive, we reduce the noise (R), signaling higher certainty.
     const marketEffect = marketSignal > 0 ? 0.9 : 1.1;
 
     // 3. Calculate Dynamic R (Measurement Noise)
-    // Anchored to Decorative Stability, Volatility, and AI Confidence.
-    // Low AI confidence (e.g. 0.2) drastically increases R, making the Kalman filter ignore current noise.
+    // Anchored to Defensive Stability and Offensive Volatility
     const hStab = home.defensiveStability || 0.5;
     const hVol = home.offensiveVolatility || 0.5;
     const aStab = away.defensiveStability || 0.5;
     const aVol = away.offensiveVolatility || 0.5;
 
-    const confidenceNoise = (1 - aiConfidence) * 0.4;
-    const homeR = Math.max(0.05, (((1 - hStab) * 0.2) + (hVol * 0.1) + maxVariance + confidenceNoise) * marketEffect);
-    const awayR = Math.max(0.05, (((1 - aStab) * 0.2) + (aVol * 0.1) + maxVariance + confidenceNoise) * marketEffect);
+    const homeR = Math.max(0.05, (((1 - hStab) * 0.2) + (hVol * 0.1) + maxVariance) * marketEffect);
+    const awayR = Math.max(0.05, (((1 - aStab) * 0.2) + (aVol * 0.1) + maxVariance) * marketEffect);
 
     // 4. Initial State Estimation (Kalman + Neural Memory with Time-Decay)
     const homeMemory = new NeuralMemoryBridge(home.npxG);
@@ -513,9 +470,11 @@ export const calculateCredibilitySignal = (home: TeamStats, away: TeamStats): nu
     // across recent performance and structural steel data (npxG vs xT).
     
     const auditTeam = (stats: TeamStats) => {
-        const meanForm = stats.form.reduce((a, b) => a + b, 0) / (stats.form.length || 1);
-        const varianceForm = stats.form.reduce((a, b) => a + Math.pow(b - meanForm, 2), 0) / (stats.form.length || 1);
-        const standardError = Math.sqrt(varianceForm) / Math.sqrt(stats.form.length || 1);
+        if (!stats) return 0.5; // Survival Shield: Prevent crashing Dixon-Coles on undefined inputs
+        const form = Array.isArray(stats.form) ? stats.form : [0.5]; // Strict validation for reduction stability
+        const meanForm = form.reduce((a, b) => a + b, 0) / (form.length || 1);
+        const varianceForm = form.reduce((a, b) => a + Math.pow(b - meanForm, 2), 0) / (form.length || 1);
+        const standardError = Math.sqrt(varianceForm) / Math.sqrt(form.length || 1);
         
         // Structural Divergence (SD): The gap between creation (xT) and execution (npxG)
         const structuralDivergence = Math.abs(stats.npxG - stats.xT);

@@ -27,10 +27,6 @@ export interface SimulationResult {
     divergence: number;
     survivalRating: number; 
     computeOptimized: boolean; 
-    environmentalImpact?: {
-        weatherDrag: number;
-        refereeVolatility: number;
-    };
 }
 
 export const runMonteCarloSimulation = async (
@@ -72,14 +68,6 @@ export const runMonteCarloSimulation = async (
     const stressIterations = skillGap > 1.75 ? 500 : 2500;
     const batchSize = 2500;
 
-    // --- ENVIRONMENTAL QUANTIFICATION LAYER ---
-    const weatherStr = (context?.weather || '').toLowerCase();
-    const refStr = (context?.referee || '').toLowerCase();
-    
-    const weatherDrag = (weatherStr.includes('rain') || weatherStr.includes('snow') || weatherStr.includes('wind')) ? 0.92 : 1.0;
-    const weatherVol = (weatherStr.includes('storm') || weatherStr.includes('extreme')) ? 0.15 : 0;
-    const refereeVolatility = (refStr.includes('strict') || refStr.includes('cards') || refStr.includes('aggressive')) ? 0.12 : 0;
-
     // Dixon-Coles Tau Adjustment Kernel
     const getTau = (x: number, y: number, lambda: number, mu: number, r: number) => {
         if (lambda === 0 || mu === 0) return 1;
@@ -91,7 +79,6 @@ export const runMonteCarloSimulation = async (
     };
     
     const noiseMultiplier = Math.max(0.5, 1.5 - confidenceVector);
-    
     let totalProbSum = 0;
     let squaredProbSum = 0;
     
@@ -103,9 +90,8 @@ export const runMonteCarloSimulation = async (
         }
 
         const randomFactor = (Math.random() * 0.12 - 0.06) * noiseMultiplier;
-        const totalVol = (weatherVol + refereeVolatility);
         const pathInfluence = path.reduce((acc, p) => acc + (p.confidence * p.intensity), 0) / (path.length * 100);
-        const currentProb = (initialProb / 100 + randomFactor + pathInfluence + (totalVol * (Math.random() - 0.5)));
+        const currentProb = (initialProb / 100 + randomFactor + pathInfluence);
         
         totalProbSum += currentProb;
         squaredProbSum += currentProb * currentProb;
@@ -114,14 +100,12 @@ export const runMonteCarloSimulation = async (
         const aVolSignal = (Math.random() * 0.2 - 0.1) * (awayVolatility || 0.5);
 
         // Goal Simulation for Market Audit (Anchored to Structural Floor and modulated by Stability)
-        // Probability also influences the Lambda split
         const hL = (homeLambda * (1 + hVolSignal)) * (0.8 + (1 - (awayStability || 0.5)) * 0.4) * (currentProb * 2);
         const aM = (awayMu * (1 + aVolSignal)) * (0.8 + (1 - (homeStability || 0.5)) * 0.4) * ((1 - currentProb) * 2);
         
-        // Final normalization to Structural Floor (Modulated by Weather Drag)
         const totalExpectancy = hL + aM;
-        const normalizedHL = (hL / (totalExpectancy || 1)) * structuralFloor * weatherDrag;
-        const normalizedAM = (aM / (totalExpectancy || 1)) * structuralFloor * weatherDrag;
+        const normalizedHL = (hL / (totalExpectancy || 1)) * structuralFloor;
+        const normalizedAM = (aM / (totalExpectancy || 1)) * structuralFloor;
         
         const simHomeGoalsRaw = poissonRandom(normalizedHL);
         const simAwayGoalsRaw = poissonRandom(normalizedAM);
@@ -282,11 +266,7 @@ export const runMonteCarloSimulation = async (
         marketAudits,
         divergence,
         survivalRating,
-        computeOptimized: skillGap > 1.75,
-        environmentalImpact: {
-            weatherDrag,
-            refereeVolatility
-        }
+        computeOptimized: skillGap > 1.75
     };
 };
 

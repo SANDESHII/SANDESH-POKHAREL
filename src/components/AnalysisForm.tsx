@@ -15,7 +15,10 @@ interface AnalysisFormProps {
     loading: boolean;
 }
 
-export const AnalysisForm: React.FC<AnalysisFormProps> = ({ home, setHome, away, setAway, league, setLeague, time, setTime, onAnalyze, loading }) => {
+export const AnalysisForm: React.FC<AnalysisFormProps> = ({ 
+    home, setHome, away, setAway, league, setLeague, time, setTime, 
+    onAnalyze, loading 
+}) => {
     return (
         <div className="bg-zinc-950 p-12 rounded-2xl border border-emerald-900/30 shadow-2xl backdrop-blur-sm max-w-5xl mx-auto">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-10">
@@ -82,7 +85,10 @@ export const AnalysisForm: React.FC<AnalysisFormProps> = ({ home, setHome, away,
                 }`}
             >
                 {loading ? (
-                    'RUNNING ANALYSIS...'
+                    <div className="flex items-center gap-3">
+                        <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                        RUNNING ANALYSIS...
+                    </div>
                 ) : (
                     'COMMENCE ANALYSIS'
                 )}
