@@ -8,46 +8,102 @@ export interface ViterbiPath {
 }
 
 /**
- * 1. Baum-Welch (Expectation-Maximization) Transition Calibration
- * Refines the transition matrix using historical observation sequences to identify team-specific tactical propensities.
- * Uses the E-M protocol: Calculate state probabilities (Expectation) and update transitions (Maximization).
+ * 1. Baum-Welch (Soft Expectation-Maximization) Transition Calibration
+ * Refines the transition matrix using historical observation sequences.
+ * Uses the Forward-Backward protocol with scaling factors to prevent numerical underflow.
  */
-const calibrateBaumWelch = (sequence: number[], regimeIntensities: number[]): number[][] => {
-    const N = regimeIntensities.length;
+const calibrateBaumWelch = (sequence: number[], intensities: number[]): number[][] => {
+    const N = intensities.length;
     const T = sequence.length;
-    
-    // 1. Initialize count matrix with Laplace Smoothing (priors)
-    let transitions = Array.from({ length: N }, () => Array(N).fill(0.2));
-    
-    if (T < 2) return transitions.map(row => {
-        const sum = row.reduce((a, b) => a + b, 0);
-        return row.map(v => v / sum);
-    });
+    if (T < 2) return Array.from({ length: N }, () => Array(N).fill(1/N));
 
-    // 2. Map sequence to closest discrete states
-    const path = sequence.map(v => {
-        let minDiff = Infinity;
-        let bestIdx = 0;
-        regimeIntensities.forEach((intensity, idx) => {
-            const diff = Math.abs(v - intensity);
-            if (diff < minDiff) {
-                minDiff = diff;
-                bestIdx = idx;
+    // Initialize Transition Matrix A with institutional priors (Tactical Stickiness)
+    let A = Array.from({ length: N }, (_, i) => 
+        Array.from({ length: N }, (_, j) => (i === j ? 0.75 : 0.25 / (N - 1)))
+    );
+
+    let pi = [0.5, 0.2, 0.2, 0.1]; // Prior: Matches usually start in lower intensity
+    let iterations = 0;
+    const maxIterations = 5; // Balanced for client-side performance vs precision
+    let lastLogLikelihood = -Infinity;
+
+    while (iterations < maxIterations) {
+        // Forward Pass (Alpha) with scaling
+        let alpha = Array.from({ length: T }, () => Array(N).fill(0));
+        let c = Array(T).fill(0);
+
+        const getB = (stateIdx: number, obs: number) => {
+            const diff = Math.abs(obs - intensities[stateIdx]);
+            return Math.exp(-0.5 * Math.pow(diff / 12, 2)) + 1e-8;
+        };
+
+        for (let i = 0; i < N; i++) {
+            alpha[0][i] = pi[i] * getB(i, sequence[0]);
+            c[0] += alpha[0][i];
+        }
+        c[0] = 1.0 / (c[0] || 1e-12);
+        for (let i = 0; i < N; i++) alpha[0][i] *= c[0];
+
+        for (let t = 1; t < T; t++) {
+            for (let j = 0; j < N; j++) {
+                let sum = 0;
+                for (let i = 0; i < N; i++) sum += alpha[t-1][i] * A[i][j];
+                alpha[t][j] = sum * getB(j, sequence[t]);
+                c[t] += alpha[t][j];
             }
-        });
-        return bestIdx;
-    });
+            c[t] = 1.0 / (c[t] || 1e-12);
+            for (let j = 0; j < N; j++) alpha[t][j] *= c[t];
+        }
 
-    // 3. Maximization: Update transition frequencies from the observed path
-    for (let i = 0; i < path.length - 1; i++) {
-        transitions[path[i]][path[i+1]] += 1.0;
+        // Backward Pass (Beta)
+        let beta = Array.from({ length: T }, () => Array(N).fill(0));
+        for (let i = 0; i < N; i++) beta[T-1][i] = c[T-1];
+        for (let t = T - 2; t >= 0; t--) {
+            for (let i = 0; i < N; i++) {
+                let sum = 0;
+                for (let j = 0; j < N; j++) {
+                    sum += A[i][j] * getB(j, sequence[t+1]) * beta[t+1][j];
+                }
+                beta[t][i] = sum * c[t];
+            }
+        }
+
+        // Convergence Check: Calculate Log-Likelihood
+        let currentLogLikelihood = 0;
+        for (let t = 0; t < T; t++) currentLogLikelihood -= Math.log(c[t] || 1e-12);
+        
+        if (Math.abs(currentLogLikelihood - lastLogLikelihood) < 1e-4) break;
+        lastLogLikelihood = currentLogLikelihood;
+
+        // E-Step & M-Step Combined
+        let newA = Array.from({ length: N }, () => Array(N).fill(0));
+        for (let t = 0; t < T - 1; t++) {
+            // Apply Temporal Bias: Recent observations are 20% more influential
+            const temporalWeight = 1 + (t / T) * 0.2;
+            
+            let denom = 0;
+            for (let i = 0; i < N; i++) {
+                for (let j = 0; j < N; j++) {
+                    denom += alpha[t][i] * A[i][j] * getB(j, sequence[t+1]) * beta[t+1][j];
+                }
+            }
+            for (let i = 0; i < N; i++) {
+                for (let j = 0; j < N; j++) {
+                    const xi = (alpha[t][i] * A[i][j] * getB(j, sequence[t+1]) * beta[t+1][j]) / (denom || 1e-12);
+                    newA[i][j] += xi * temporalWeight;
+                }
+            }
+        }
+
+        A = newA.map(row => {
+            const sum = row.reduce((a, b) => a + b, 0);
+            return sum > 0 ? row.map(v => v / sum) : row.map(() => 1/N);
+        });
+
+        iterations++;
     }
 
-    // 4. Normalize rows to produce a valid Stochastic Matrix A
-    return transitions.map(row => {
-        const sum = row.reduce((a, b) => a + b, 0);
-        return row.map(v => v / sum);
-    });
+    return A;
 };
 
 /**

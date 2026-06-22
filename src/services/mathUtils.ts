@@ -17,23 +17,42 @@ export const getTimeDecayWeights = (len: number, lambda: number = 0.15): number[
 export class KalmanFilter {
     private state: number;
     private covariance: number;
-    private Q: number = 0.01; // Process Noise
-    private R: number = 0.1;  // Measurement Noise
+    private defaultQ: number = 0.01; // Process Noise
+    private defaultR: number = 0.1;  // Measurement Noise
 
     constructor(initialState: number) {
         this.state = initialState;
-        this.covariance = 1.0;
+        this.covariance = 0.5; // Initial uncertainty
     }
 
-    update(measurement: number, dynamicR?: number): number {
-        const R = dynamicR || this.R;
-        // Predict
-        this.covariance = this.covariance + this.Q;
-        // Gain
+    /**
+     * Adaptive Kalman Update
+     * @param measurement The new data point
+     * @param dynamicR Measurement Noise (R) - High R means we trust measurements LESS
+     * @param dynamicQ Process Noise (Q) - High Q means we trust the internal state LESS
+     * @param deltaT Time elapsed since last update (e.g. in days). Default is 1.0 (one step).
+     */
+    update(measurement: number, dynamicR?: number, dynamicQ?: number, deltaT: number = 1.0): number {
+        const R = dynamicR || this.defaultR;
+        const Q = (dynamicQ || this.defaultQ) * deltaT;
+
+        // 1. Prediction Step (Time Update)
+        // We project the state uncertainty forward, scaled by time elapsed
+        this.covariance = this.covariance + Q;
+
+        // 2. Innovation (Residual)
+        const residual = measurement - this.state;
+
+        // 3. Kalman Gain (K)
+        // Ratio of prediction uncertainty vs total uncertainty
         const K = this.covariance / (this.covariance + R);
-        // Correct
-        this.state = this.state + K * (measurement - this.state);
+
+        // 4. Correction Step (Measurement Update)
+        this.state = this.state + K * residual;
+
+        // 5. Post-Update Covariance (Joseph Form alternative for absolute stability)
         this.covariance = (1 - K) * this.covariance;
+
         return this.state;
     }
 }
@@ -331,9 +350,9 @@ export const calculateDixonColes = (
         const currentL = calcTotalL(alpha, beta);
 
         while (stepSize > 0.01 && !success) {
-            // Newton step: x = x + (f'/f'') - Fixed per User Request (Handle Negative Hessian properly)
-            let nextAlpha = alpha + (gAlpha / (hAlpha || -1e-5)) * stepSize;
-            let nextBeta = beta + (gBeta / (hBeta || -1e-5)) * stepSize;
+            // Newton step: x = x - (f'/f'') - Fixed for True Directionality per Calculus
+            let nextAlpha = alpha - (gAlpha / (hAlpha || -1e-5)) * stepSize;
+            let nextBeta = beta - (gBeta / (hBeta || -1e-5)) * stepSize;
 
             nextAlpha = Math.min(maxParam, Math.max(minParam, nextAlpha));
             nextBeta = Math.min(maxParam, Math.max(minParam, nextBeta));
@@ -387,34 +406,89 @@ export const calculateDixonColes = (
 
 // Helper for initial estimation with recursive state warming
 function homeKF_estimate(home: TeamStats, memory: RecursiveExpectationFilter, r: number): number {
-    let rawSequence = home.npxGSequence && home.npxGSequence.length > 0 ? home.npxGSequence : [home.npxG];
+    const history = home.matchHistory || [];
+    const npxGSeq = home.npxGSequence || [];
     
-    // 1. Initialize with earliest data point
+    // We prefer using matchHistory for real Δt accuracy
+    // If not available, we fall back to the sequence with fixed Δt
+    let rawSequence: number[] = [];
+    let deltas: number[] = [];
+
+    if (history.length > 0) {
+        // Sort history by daysAgo descending (oldest to newest)
+        const sortedHistory = [...history].sort((a, b) => (b.daysAgo || 0) - (a.daysAgo || 0));
+        rawSequence = sortedHistory.map(m => m.xgScored);
+        
+        for (let i = 0; i < sortedHistory.length; i++) {
+            if (i === 0) deltas.push(1.0); // Initial step baseline
+            else {
+                const diff = (sortedHistory[i-1].daysAgo || 0) - (sortedHistory[i].daysAgo || 0);
+                deltas.push(Math.max(0.1, diff));
+            }
+        }
+    } else {
+        rawSequence = npxGSeq.length > 0 ? npxGSeq : [home.npxG];
+        deltas = Array(rawSequence.length).fill(4.0); // Assume 4 days between matches as baseline
+    }
+
+    // 1. Calculate Entropy-driven Process Noise (Q)
+    const entropy = calculateShannonEntropy(home);
+    const adaptiveQ = 0.005 + (entropy * 0.08);
+
+    // 2. Initialize
     const kf = new KalmanFilter(rawSequence[0]);
     
-    // 2. Warm up through the historical sequence
+    // 3. Warm up through historical sequence
     for (let i = 1; i < rawSequence.length; i++) {
-        const memSignal = memory.update(rawSequence[i]);
-        kf.update(memSignal, r * 1.5); // Use slightly higher noise during historical warmup
+        // According to user critique: Avoid pre-decaying data. 
+        // We feed the raw signal but use the Delta T to scale uncertainty.
+        kf.update(rawSequence[i], r * 1.5, adaptiveQ, deltas[i]); 
     }
     
-    // 3. Final convergence with current npxG
-    const finalSignal = memory.update(home.npxG);
-    return kf.update(finalSignal, r);
+    // 4. Final convergence with current npxG
+    // Estimate delta since last match in history
+    const lastMatchDaysAgo = history.length > 0 ? (history[0].daysAgo || 0) : 0;
+    const finalDelta = Math.max(1.0, lastMatchDaysAgo);
+
+    return kf.update(home.npxG, r, adaptiveQ, finalDelta);
 }
 
 function awayKF_estimate(away: TeamStats, memory: RecursiveExpectationFilter, r: number): number {
-    let rawSequence = away.npxGSequence && away.npxGSequence.length > 0 ? away.npxGSequence : [away.npxG];
+    const history = away.matchHistory || [];
+    const npxGSeq = away.npxGSequence || [];
     
+    let rawSequence: number[] = [];
+    let deltas: number[] = [];
+
+    if (history.length > 0) {
+        const sortedHistory = [...history].sort((a, b) => (b.daysAgo || 0) - (a.daysAgo || 0));
+        rawSequence = sortedHistory.map(m => m.xgScored);
+        
+        for (let i = 0; i < sortedHistory.length; i++) {
+            if (i === 0) deltas.push(1.0);
+            else {
+                const diff = (sortedHistory[i-1].daysAgo || 0) - (sortedHistory[i].daysAgo || 0);
+                deltas.push(Math.max(0.1, diff));
+            }
+        }
+    } else {
+        rawSequence = npxGSeq.length > 0 ? npxGSeq : [away.npxG];
+        deltas = Array(rawSequence.length).fill(4.0);
+    }
+
+    const entropy = calculateShannonEntropy(away);
+    const adaptiveQ = 0.005 + (entropy * 0.08);
+
     const kf = new KalmanFilter(rawSequence[0]);
     
     for (let i = 1; i < rawSequence.length; i++) {
-        const memSignal = memory.update(rawSequence[i]);
-        kf.update(memSignal, r * 1.5);
+        kf.update(rawSequence[i], r * 1.5, adaptiveQ, deltas[i]);
     }
     
-    const finalSignal = memory.update(away.npxG);
-    return kf.update(finalSignal, r);
+    const lastMatchDaysAgo = history.length > 0 ? (history[0].daysAgo || 0) : 0;
+    const finalDelta = Math.max(1.0, lastMatchDaysAgo);
+
+    return kf.update(away.npxG, r, adaptiveQ, finalDelta);
 }
 /**
  * 7. Regime Change Detection (Optimal Partitioning)
