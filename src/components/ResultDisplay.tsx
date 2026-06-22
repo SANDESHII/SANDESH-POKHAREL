@@ -20,9 +20,9 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety, isOpti
     const theme = {
         name: isOver15 ? 'Emerald-Fortress' : isUnder35 ? 'Cobalt-Fortress' : 'Standard-Audit',
         accent: isOver15 ? 'emerald' : isUnder35 ? 'blue' : 'zinc',
-        text: isOver15 ? 'text-emerald-500' : isUnder35 ? 'text-blue-500' : 'text-zinc-500',
-        title: isOver15 ? 'text-emerald-900' : isUnder35 ? 'text-blue-900' : 'text-zinc-900',
-        border: isOver15 ? 'border-emerald-900/30' : isUnder35 ? 'border-blue-900/30' : 'border-zinc-900/10',
+        text: isOver15 ? 'text-emerald-400' : isUnder35 ? 'text-blue-400' : 'text-zinc-500',
+        title: isOver15 ? 'text-emerald-900' : isUnder35 ? 'text-blue-900' : 'text-emerald-900',
+        border: isOver15 ? 'border-emerald-900/30' : isUnder35 ? 'border-blue-900/30' : 'border-zinc-800',
         bg: isOver15 ? 'bg-emerald-950/20' : isUnder35 ? 'bg-blue-950/20' : 'bg-transparent',
         glow: isOver15 ? 'drop-shadow-[0_0_20px_rgba(52,211,153,0.3)]' : isUnder35 ? 'drop-shadow-[0_0_20px_rgba(59,130,246,0.3)]' : ''
     };
@@ -40,14 +40,14 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety, isOpti
                     />
                     <StatCard 
                         label="Structural Floor" 
-                        value={analysis.structuralFloor.toFixed(2)} 
+                        value={analysis.structuralFloor?.toFixed(2) || '0.00'} 
                         subValue="GOALS"
                         icon={Shield} 
                         color="blue"
                     />
                     <StatCard 
                         label="Physical Ceiling" 
-                        value={analysis.physicalCeiling.toFixed(2)} 
+                        value={analysis.physicalCeiling?.toFixed(2) || '0.00'} 
                         subValue="LIMIT"
                         icon={Target} 
                         color="purple"
@@ -110,11 +110,11 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety, isOpti
                             <div className="grid grid-cols-2 gap-8">
                                 <div className="space-y-2">
                                     <span className="text-[10px] text-zinc-600 uppercase font-black">xG</span>
-                                    <p className="text-3xl font-black text-white">{analysis.homeXG.toFixed(2)}</p>
+                                    <p className="text-3xl font-black text-white">{analysis.homeXG?.toFixed(2) || '0.00'}</p>
                                 </div>
                                 <div className="space-y-2">
                                     <span className="text-[10px] text-zinc-600 uppercase font-black">Attack</span>
-                                    <p className={`text-3xl font-black ${theme.text}`}>{analysis.homeStats.xT.toFixed(2)}</p>
+                                    <p className={`text-3xl font-black ${theme.text}`}>{analysis.homeStats.xT?.toFixed(2) || '0.00'}</p>
                                 </div>
                             </div>
                         </div>
@@ -125,11 +125,11 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety, isOpti
                             <div className="grid grid-cols-2 gap-8">
                                 <div className="space-y-2">
                                     <span className="text-[10px] text-zinc-600 uppercase font-black">xG</span>
-                                    <p className="text-3xl font-black text-white">{analysis.awayXG.toFixed(2)}</p>
+                                    <p className="text-3xl font-black text-white">{analysis.awayXG?.toFixed(2) || '0.00'}</p>
                                 </div>
                                 <div className="space-y-2">
                                     <span className="text-[10px] text-zinc-600 uppercase font-black">Attack</span>
-                                    <p className={`text-3xl font-black ${theme.text}`}>{analysis.awayStats.xT.toFixed(2)}</p>
+                                    <p className={`text-3xl font-black ${theme.text}`}>{analysis.awayStats.xT?.toFixed(2) || '0.00'}</p>
                                 </div>
                             </div>
                         </div>
@@ -149,7 +149,7 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety, isOpti
                     <div className="relative z-10 space-y-4">
                         <div className={`flex justify-between items-center ${theme.title} border-b ${theme.border} pb-2`}>
                             <span className="text-[10px] font-black uppercase">Surety</span>
-                            <span className={`text-xl font-black ${theme.text}`}>{surety.suretyScore.toFixed(0)}%</span>
+                            <span className={`text-xl font-black ${theme.text}`}>{surety.suretyScore?.toFixed(0) || '0'}%</span>
                         </div>
                         <p className={`text-[9px] ${theme.text} opacity-60 font-bold uppercase leading-relaxed text-left`}>
                             {surety.auditNote}

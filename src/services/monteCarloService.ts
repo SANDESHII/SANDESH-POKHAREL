@@ -252,8 +252,8 @@ export const runMonteCarloSimulation = async (
 
     const infallibleAudit: InfallibleAudit = {
         physicalCeiling,
-        limitVerdict: `CEILING: ${physicalCeiling.toFixed(1)} GOALS`,
-        range: `${structuralFloor.toFixed(1)}-${physicalCeiling.toFixed(1)} GOALS`
+        limitVerdict: `CEILING: ${physicalCeiling?.toFixed(1) || '0.0'} GOALS`,
+        range: `${structuralFloor?.toFixed(1) || '0.0'}-${physicalCeiling?.toFixed(1) || '0.0'} GOALS`
     };
 
     const tailRisk = Math.min(95, (divergence * 2.5) + (100 - initialProb) * 0.2);

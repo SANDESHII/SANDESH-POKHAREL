@@ -26,10 +26,10 @@ export const StatCard: React.FC<StatCardProps> = ({ label, value, subValue, icon
                     <Icon className="w-5 h-5" />
                 </div>
                 <div className="flex flex-col">
-                    <span className="text-[10px] uppercase font-black tracking-widest text-emerald-900">{label}</span>
+                    <span className="text-[10px] uppercase font-black tracking-widest text-zinc-500">{label}</span>
                     <div className="flex items-baseline gap-2 mt-1">
                         <span className="text-2xl font-black tracking-tighter text-white">{value}</span>
-                        {subValue && <span className="text-[10px] font-black text-emerald-950 tracking-wider uppercase">{subValue}</span>}
+                        {subValue && <span className="text-[10px] font-black text-zinc-700 tracking-wider uppercase">{subValue}</span>}
                     </div>
                 </div>
             </div>

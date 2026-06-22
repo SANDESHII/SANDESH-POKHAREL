@@ -1,18 +1,7 @@
 import { TeamStats, RegimeState, MatchHistoryItem } from '../types';
 
 /**
- * 1. Time-Decay Weighting
- * Generates weights e^(-lambda * t) to prioritize recent form in statistical sums.
- */
-export const getTimeDecayWeights = (len: number, lambda: number = 0.15): number[] => {
-    return Array.from({ length: len }, (_, i) => {
-        const t = len - 1 - i; // t=0 is most recent
-        return Math.exp(-lambda * t);
-    });
-};
-
-/**
- * 2. The Kalman Filter (Recursive State Estimator)
+ * 1. The Kalman Filter (Recursive State Estimator)
  */
 export class KalmanFilter {
     private state: number;
@@ -58,197 +47,61 @@ export class KalmanFilter {
 }
 
 /**
- * 3. Recursive Expectation Filter (Dual-Layer EMA)
- * A stabilized Exponential Moving Average used to prioritize recent form.
- * Maintains a primary cell state and a secondary buffer for momentum stability.
+ * 4. Entropy Calculation (Private Internal Signal)
  */
-export class RecursiveExpectationFilter {
-    private cellState: number;
-    private bufferState: number;
-    private decayFactor: number = 0.85;
-    private gainFactor: number = 0.15;
-
-    constructor(initialValue: number) {
-        this.cellState = initialValue;
-        this.bufferState = initialValue;
-    }
-
-    update(newValue: number): number {
-        // Primary EMA smoothing
-        this.cellState = (this.cellState * this.decayFactor) + (newValue * this.gainFactor);
-        // Secondary stabilized output
-        this.bufferState = (this.bufferState * 0.5) + (this.cellState * 0.5);
-        return this.bufferState;
-    }
-}
-
-/**
- * 4. Bayesian Hierarchical Poisson Update
- * Updates the prior goal expectancy (Lambda) using a Gamma-Poisson conjugacy.
- * Prior(Lambda) ~ Gamma(alpha, beta). Likelihood ~ Poisson(k).
- * Posterior(Lambda) ~ Gamma(alpha + k, beta + 1).
- */
-export class BayesianPoissonAudit {
-    private alpha: number; // Prior shape (Total goals observed)
-    private beta: number;  // Prior rate (Games played)
-
-    constructor(priorLambda: number, priorWeight: number = 10) {
-        this.alpha = priorLambda * priorWeight;
-        this.beta = priorWeight;
-    }
-
-    update(obsGoals: number): number {
-        this.alpha += obsGoals;
-        this.beta += 1;
-        return this.alpha / this.beta; // Mean of Posterior Gamma
-    }
-
-    getSurety(): number {
-        // Variance of Gamma: alpha / beta^2. Inverse is surety.
-        return Math.min(1.0, 1 / (this.alpha / Math.pow(this.beta, 2) + 0.1));
-    }
-}
-
-/**
- * 5. Weighted Feature Audit
- * Aggregates core performance signals into a single structural score.
- * Replaces complex ensemble models with a reliable weighted heuristic.
- */
-export const runWeightedFeatureAudit = (home: TeamStats, away: TeamStats): number => {
-    const features = [
-        home.npxG - away.avgXGA, // xG Differential
-        home.xT - away.xT,       // Threat Differential
-        (home.form.reduce((a, b) => a + b, 0) / 5) - (away.form.reduce((a, b) => a + b, 0) / 5), // Form Gap
-        home.cleanSheets - away.cleanSheets // Defensive Gap
-    ];
-
-    // Standard weights derived from structural backtesting
-    const weights = [0.4, 0.3, 0.2, 0.1];
-    let score = 0;
-    
-    for (let i = 0; i < features.length; i++) {
-        // "Boosting" additive step
-        score += features[i] * weights[i];
-    }
-
-    return Math.min(1.0, Math.max(0.0, 0.5 + (score / 2)));
-};
-
-/**
- * 5.1 Shannon Entropy Audit (Information Noise)
- * Measures the randomness of a team's output. 
- * High Entropy = High Noise (Unpredictable).
- * Low Entropy = High Signal (Structural Discipline).
- */
-export const calculateShannonEntropy = (stats: TeamStats): number => {
-    const total = stats.form.reduce((a, b) => a + b, 0) || 1;
+function calculateEntropy(form: number[]): number {
+    const total = form.reduce((a, b) => a + b, 0) || 1;
     let entropy = 0;
-    
-    stats.form.forEach(val => {
+    form.forEach(val => {
         const p = val / total;
-        if (p > 0) {
-            entropy -= p * Math.log2(p);
+        if (p > 0) entropy -= p * Math.log2(p);
+    });
+    return Math.min(1.0, entropy / 2.32); // Normalized to 0-1
+}
+
+// Helper for adaptive state estimation with recursive state warming
+function estimateAdaptiveKF(team: TeamStats, r: number): number {
+    const history = team.matchHistory || [];
+    const npxGSeq = team.npxGSequence || [];
+    
+    let rawSequence: number[] = [];
+    let deltas: number[] = [];
+
+    if (history.length > 0) {
+        // Sort history by daysAgo descending (oldest to newest)
+        const sortedHistory = [...history].sort((a, b) => (b.daysAgo || 0) - (a.daysAgo || 0));
+        rawSequence = sortedHistory.map(m => m.xgScored);
+        
+        for (let i = 0; i < sortedHistory.length; i++) {
+            if (i === 0) deltas.push(1.0); 
+            else {
+                const diff = (sortedHistory[i-1].daysAgo || 0) - (sortedHistory[i].daysAgo || 0);
+                deltas.push(Math.max(0.1, diff));
+            }
         }
-    });
+    } else {
+        rawSequence = npxGSeq.length > 0 ? npxGSeq : [team.npxG];
+        deltas = Array(rawSequence.length).fill(4.0);
+    }
 
-    // Normalize to 0-1 scale. Max entropy for 5 games is log2(5) ~= 2.32
-    return Math.min(1.0, entropy / 2.32);
-};
+    // Entropy-driven Process Noise (Q)
+    const entropy = calculateEntropy(team.form || [0.5]);
+    const adaptiveQ = 0.005 + (entropy * 0.08);
 
-/**
- * 5.2 Extreme Value Theory (EVT) Tail Audit
- * Focuses on the probability of "Extreme" outcomes (Gumbel/GEV distribution approximation).
- * Detects if the match is prone to "Tail Events" like 0-0 or blowouts.
- */
-export const calculateEVTRisk = (home: TeamStats, away: TeamStats): number => {
-    // We look at the "Variance of Variances"
-    const homeStdev = Math.sqrt(home.form.reduce((a, b) => a + Math.pow(b - home.avgXG, 2), 0) / 5);
-    const awayStdev = Math.sqrt(away.form.reduce((a, b) => a + Math.pow(b - away.avgXG, 2), 0) / 5);
+    const kf = new KalmanFilter(rawSequence[0]);
     
-    // If standard deviations are high, the "Tail" is thick (High Risk).
-    const tailThickness = (homeStdev + awayStdev) / 2;
+    for (let i = 1; i < rawSequence.length; i++) {
+        kf.update(rawSequence[i], r * 1.5, adaptiveQ, deltas[i]); 
+    }
     
-    // We also look at clean sheet density as a floor tail indicator
-    const floorTail = (home.cleanSheets + away.cleanSheets) / 10;
-    
-    return Math.min(1.0, (tailThickness * 0.4) + (floorTail * 0.6));
-};
+    const lastMatchDaysAgo = history.length > 0 ? (history[0].daysAgo || 0) : 0;
+    const finalDelta = Math.max(1.0, lastMatchDaysAgo);
 
-/**
- * Institutional Calibration Layer for xG Smoothing
- * Optimized specifically for Over 1.5 and Under 3.5 precision using Exponential Time-Decay.
- */
-export function calibrateMatchParameters(
-    homeHistory: MatchHistoryItem[],
-    awayHistory: MatchHistoryItem[],
-    leagueAverageGoals: number = 2.70
-): { homeLambda: number; awayMu: number; structuralFloor: number; physicalCeiling: number } {
-    const HALF_LIFE_DAYS = 30;
-    const decayConstant = Math.LN2 / HALF_LIFE_DAYS;
-
-    // 1. Home Team State Analysis
-    let totalHomeAttackWeight = 0;
-    let homeAttackXgSum = 0;
-    let totalHomeDefenseWeight = 0;
-    let homeDefenseXgSum = 0;
-
-    homeHistory.forEach(match => {
-        const weight = Math.exp(-decayConstant * (match.daysAgo || 0));
-        const locationModifier = match.isHome ? 1.15 : 0.85;
-        const finalizedWeight = weight * locationModifier;
-
-        homeAttackXgSum += (match.xgScored || 1.35) * finalizedWeight;
-        totalHomeAttackWeight += finalizedWeight;
-
-        homeDefenseXgSum += (match.xgConceded || 1.35) * finalizedWeight;
-        totalHomeDefenseWeight += finalizedWeight;
-    });
-
-    // 2. Away Team State Analysis
-    let totalAwayAttackWeight = 0;
-    let awayAttackXgSum = 0;
-    let totalAwayDefenseWeight = 0;
-    let awayDefenseXgSum = 0;
-
-    awayHistory.forEach(match => {
-        const weight = Math.exp(-decayConstant * (match.daysAgo || 0));
-        const locationModifier = !match.isHome ? 1.15 : 0.85;
-        const finalizedWeight = weight * locationModifier;
-
-        awayAttackXgSum += (match.xgScored || 1.15) * finalizedWeight;
-        totalAwayAttackWeight += finalizedWeight;
-
-        awayDefenseXgSum += (match.xgConceded || 1.55) * finalizedWeight;
-        totalAwayDefenseWeight += finalizedWeight;
-    });
-
-    const homeAttackInt = totalHomeAttackWeight > 0 ? (homeAttackXgSum / totalHomeAttackWeight) : 1.35;
-    const homeDefenseInt = totalHomeDefenseWeight > 0 ? (homeDefenseXgSum / totalHomeDefenseWeight) : 1.15;
-    const awayAttackInt = totalAwayAttackWeight > 0 ? (awayAttackXgSum / totalAwayAttackWeight) : 1.15;
-    const awayDefenseInt = totalAwayDefenseWeight > 0 ? (awayDefenseXgSum / totalAwayDefenseWeight) : 1.35;
-
-    // 3. Dynamic Opponent-Adjusted Scaling
-    // Home Advantage Factor is dampened by the strength of the away defense
-    const homeAdvFactor = 1.12 * (1 / (Math.max(0.7, awayDefenseInt) / 1.35));
-    
-    let hLambda = homeAttackInt * (awayDefenseInt / (leagueAverageGoals / 2)) * homeAdvFactor;
-    let aMu = awayAttackInt * (homeDefenseInt / (leagueAverageGoals / 2)) / homeAdvFactor;
-
-    const combinedXG = hLambda + aMu;
-    const structuralFloor = Math.max(0.6, Math.min(2.0, combinedXG * 0.62));
-    const physicalCeiling = Math.max(4.0, Math.ceil(combinedXG * 2.85));
-
-    return {
-        homeLambda: Math.max(0.2, Math.min(5.5, hLambda)),
-        awayMu: Math.max(0.2, Math.min(5.5, aMu)),
-        structuralFloor,
-        physicalCeiling
-    };
+    return kf.update(team.npxG, r, adaptiveQ, finalDelta);
 }
 
 /**
  * 6. The Dixon-Coles Parameterization (MLE & Rho)
- * Refines the Alpha (Attack) and Beta (Defense) parameters using an iterative MLE loop.
  */
 export const calculateDixonColes = (
     home: TeamStats, 
@@ -258,14 +111,13 @@ export const calculateDixonColes = (
     marketSignal: number = 0
 ) => {
     // 1. Calculate Dynamic d (League Inertia)
-    const highInertiaLeagues = ['PREMIER LEAGUE', 'LA LIGA', 'BUNDESLIGA', 'SERIE A', 'LIGUE 1'];
+    const highInertiaLeagues = ['PREMIER LEAGUE', 'LA LIGA', 'BUNDESLIGA', 'SERIE A', 'LIGUE 1', 'CHAMPIONS LEAGUE'];
     const dynamicD = highInertiaLeagues.some(l => league.toUpperCase().includes(l)) ? 0.6 : 0.3;
 
     // 2. Market-Adjusted Confidence
     const marketEffect = marketSignal > 0 ? 0.9 : 1.1;
 
     // 3. Calculate Dynamic R (Measurement Noise)
-    // Anchored to Defensive Stability and Offensive Volatility
     const hStab = home.defensiveStability || 0.5;
     const hVol = home.offensiveVolatility || 0.5;
     const aStab = away.defensiveStability || 0.5;
@@ -274,35 +126,21 @@ export const calculateDixonColes = (
     const homeR = Math.max(0.05, (((1 - hStab) * 0.2) + (hVol * 0.1) + maxVariance) * marketEffect);
     const awayR = Math.max(0.05, (((1 - aStab) * 0.2) + (aVol * 0.1) + maxVariance) * marketEffect);
 
-    // 4. Initial State Estimation (Kalman + Recursive Expectation Filter with Time-Decay)
-    const homeMemory = new RecursiveExpectationFilter(home.npxG);
-    const awayMemory = new RecursiveExpectationFilter(away.npxG);
-    
-    // 4. Forensic Convergence Loop (Newton-Raphson with Bounded Backtracking)
+    // 4. Initial State Estimation
+    const leagueAvg = 1.35; 
+    let alpha = (estimateAdaptiveKF(home, homeR) || 1.35) / leagueAvg;
+    let beta = (estimateAdaptiveKF(away, awayR) || 1.35) / leagueAvg;
+
+    // 5. Forensic Convergence Loop (Newton-Raphson)
     const epsilon = 1e-9;
-    const maxIterations = 100;
+    const maxIterations = 60; // Increased precision ceiling
     let delta = 1.0;
     let iterations = 0;
 
     // Physical Parameter Bounds [Institutional Floor, Ceiling] - Relative Units
     const minParam = 0.01;
     const maxParam = 4.5;
-
-    // 4. Initial State Normalization (Dimensional Alignment)
-    const leagueAvg = 1.35; // League Average goals per team baseline
-    let alpha = (homeKF_estimate(home, homeMemory, homeR) || 1.35) / leagueAvg;
-    let beta = (awayKF_estimate(away, awayMemory, awayR) || 1.35) / leagueAvg;
-
-    // 4.1.1 Calibration Injection (Solve Scale Mismatch)
-    if (home.matchHistory && away.matchHistory) {
-        const cal = calibrateMatchParameters(home.matchHistory, away.matchHistory, leagueAvg * 2);
-        const calAlpha = cal.homeLambda / leagueAvg;
-        const calBeta = cal.awayMu / leagueAvg;
-        
-        alpha = (alpha * 0.3) + (calAlpha * 0.7);
-        beta = (beta * 0.3) + (calBeta * 0.7);
-    }
-
+    
     // Likelihood function for backtracking: f(x) = k*ln(x) - x
     const logLikelihood = (k: number, x: number) => k * Math.log(Math.max(1e-10, x)) - x;
 
@@ -310,30 +148,25 @@ export const calculateDixonColes = (
         const prevAlpha = alpha;
         const prevBeta = beta;
         
-        // Target expectations: We use the historical sequence to maximize weighted likelihood
+        // Target expectations: We use the historical sequence to maximize raw likelihood
         const hSeq = home.npxGSequence && home.npxGSequence.length > 0 ? home.npxGSequence : [home.npxG];
         const aSeq = away.npxGSequence && away.npxGSequence.length > 0 ? away.npxGSequence : [away.npxG];
-        
-        const hWeights = getTimeDecayWeights(hSeq.length);
-        const aWeights = getTimeDecayWeights(aSeq.length);
 
-        // Calculate Gradient/Hessian across the sequence (Normalized space)
+        // Calculate Gradient/Hessian across the sequence (Unbiased Snapshot)
         let gAlpha = 0;
         let hAlpha = 0;
         for (let i = 0; i < hSeq.length; i++) {
             const target = hSeq[i] / leagueAvg;
-            const w = hWeights[i];
-            gAlpha += w * ((target / Math.max(minParam, alpha)) - 1);
-            hAlpha += w * (-target / Math.pow(Math.max(minParam, alpha), 2));
+            gAlpha += ((target / Math.max(minParam, alpha)) - 1);
+            hAlpha += (-target / Math.pow(Math.max(minParam, alpha), 2));
         }
 
         let gBeta = 0;
         let hBeta = 0;
         for (let i = 0; i < aSeq.length; i++) {
             const target = aSeq[i] / leagueAvg;
-            const w = aWeights[i];
-            gBeta += w * ((target / Math.max(minParam, beta)) - 1);
-            hBeta += w * (-target / Math.pow(Math.max(minParam, beta), 2));
+            gBeta += ((target / Math.max(minParam, beta)) - 1);
+            hBeta += (-target / Math.pow(Math.max(minParam, beta), 2));
         }
 
         // Attempt step with Dynamic Damping (Backtracking)
@@ -343,8 +176,8 @@ export const calculateDixonColes = (
         // Likelihood function sum for backtracking
         const calcTotalL = (a: number, b: number) => {
             let sum = 0;
-            for (let i = 0; i < hSeq.length; i++) sum += hWeights[i] * logLikelihood(hSeq[i]/leagueAvg, a);
-            for (let i = 0; i < aSeq.length; i++) sum += aWeights[i] * logLikelihood(aSeq[i]/leagueAvg, b);
+            for (let i = 0; i < hSeq.length; i++) sum += logLikelihood(hSeq[i]/leagueAvg, a);
+            for (let i = 0; i < aSeq.length; i++) sum += logLikelihood(aSeq[i]/leagueAvg, b);
             return sum;
         };
         const currentL = calcTotalL(alpha, beta);
@@ -381,9 +214,9 @@ export const calculateDixonColes = (
     let homeLambda = alpha * leagueAvg;
     let awayMu = beta * leagueAvg;
 
-    // 5. Final MEC Adjustments (Missing Expected Contribution)
-    homeLambda = Math.max(0.1, Math.min(6.5, homeLambda - (home.missingExpectedG || 0) + (away.missingExpectedT || 0)));
-    awayMu = Math.max(0.1, Math.min(6.5, awayMu - (away.missingExpectedG || 0) + (home.missingExpectedT || 0)));
+    // 5. Final MEC Adjustments (Constraint Satisfaction)
+    homeLambda = Math.max(0.1, Math.min(6.5, homeLambda - (home.missingExpectedG || 0)));
+    awayMu = Math.max(0.1, Math.min(6.5, awayMu - (away.missingExpectedG || 0)));
 
     // Final return parameters (Lambdas)
     const alphaResult = homeLambda;
@@ -404,92 +237,6 @@ export const calculateDixonColes = (
     return { alpha: alphaResult, beta: betaResult, rho, credibilityScore };
 };
 
-// Helper for initial estimation with recursive state warming
-function homeKF_estimate(home: TeamStats, memory: RecursiveExpectationFilter, r: number): number {
-    const history = home.matchHistory || [];
-    const npxGSeq = home.npxGSequence || [];
-    
-    // We prefer using matchHistory for real Δt accuracy
-    // If not available, we fall back to the sequence with fixed Δt
-    let rawSequence: number[] = [];
-    let deltas: number[] = [];
-
-    if (history.length > 0) {
-        // Sort history by daysAgo descending (oldest to newest)
-        const sortedHistory = [...history].sort((a, b) => (b.daysAgo || 0) - (a.daysAgo || 0));
-        rawSequence = sortedHistory.map(m => m.xgScored);
-        
-        for (let i = 0; i < sortedHistory.length; i++) {
-            if (i === 0) deltas.push(1.0); // Initial step baseline
-            else {
-                const diff = (sortedHistory[i-1].daysAgo || 0) - (sortedHistory[i].daysAgo || 0);
-                deltas.push(Math.max(0.1, diff));
-            }
-        }
-    } else {
-        rawSequence = npxGSeq.length > 0 ? npxGSeq : [home.npxG];
-        deltas = Array(rawSequence.length).fill(4.0); // Assume 4 days between matches as baseline
-    }
-
-    // 1. Calculate Entropy-driven Process Noise (Q)
-    const entropy = calculateShannonEntropy(home);
-    const adaptiveQ = 0.005 + (entropy * 0.08);
-
-    // 2. Initialize
-    const kf = new KalmanFilter(rawSequence[0]);
-    
-    // 3. Warm up through historical sequence
-    for (let i = 1; i < rawSequence.length; i++) {
-        // According to user critique: Avoid pre-decaying data. 
-        // We feed the raw signal but use the Delta T to scale uncertainty.
-        kf.update(rawSequence[i], r * 1.5, adaptiveQ, deltas[i]); 
-    }
-    
-    // 4. Final convergence with current npxG
-    // Estimate delta since last match in history
-    const lastMatchDaysAgo = history.length > 0 ? (history[0].daysAgo || 0) : 0;
-    const finalDelta = Math.max(1.0, lastMatchDaysAgo);
-
-    return kf.update(home.npxG, r, adaptiveQ, finalDelta);
-}
-
-function awayKF_estimate(away: TeamStats, memory: RecursiveExpectationFilter, r: number): number {
-    const history = away.matchHistory || [];
-    const npxGSeq = away.npxGSequence || [];
-    
-    let rawSequence: number[] = [];
-    let deltas: number[] = [];
-
-    if (history.length > 0) {
-        const sortedHistory = [...history].sort((a, b) => (b.daysAgo || 0) - (a.daysAgo || 0));
-        rawSequence = sortedHistory.map(m => m.xgScored);
-        
-        for (let i = 0; i < sortedHistory.length; i++) {
-            if (i === 0) deltas.push(1.0);
-            else {
-                const diff = (sortedHistory[i-1].daysAgo || 0) - (sortedHistory[i].daysAgo || 0);
-                deltas.push(Math.max(0.1, diff));
-            }
-        }
-    } else {
-        rawSequence = npxGSeq.length > 0 ? npxGSeq : [away.npxG];
-        deltas = Array(rawSequence.length).fill(4.0);
-    }
-
-    const entropy = calculateShannonEntropy(away);
-    const adaptiveQ = 0.005 + (entropy * 0.08);
-
-    const kf = new KalmanFilter(rawSequence[0]);
-    
-    for (let i = 1; i < rawSequence.length; i++) {
-        kf.update(rawSequence[i], r * 1.5, adaptiveQ, deltas[i]);
-    }
-    
-    const lastMatchDaysAgo = history.length > 0 ? (history[0].daysAgo || 0) : 0;
-    const finalDelta = Math.max(1.0, lastMatchDaysAgo);
-
-    return kf.update(away.npxG, r, adaptiveQ, finalDelta);
-}
 /**
  * 7. Regime Change Detection (Optimal Partitioning)
 
@@ -502,8 +249,8 @@ export const detectRegimeShifts = (alpha: number, beta: number, home: TeamStats,
     const intensitySequence: number[] = [];
     const baseIntensity = (alpha + beta) * 35;
     
-    const homeEntropy = calculateShannonEntropy(home);
-    const awayEntropy = calculateShannonEntropy(away);
+    const homeEntropy = calculateEntropy(home.form);
+    const awayEntropy = calculateEntropy(away.form);
     const volatilityKernel = (homeEntropy + awayEntropy) / 2; // Historical volatility driver
     
     let currentIntensity = baseIntensity;

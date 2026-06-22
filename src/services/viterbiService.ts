@@ -1,6 +1,5 @@
 
 import { RegimeState, TeamStats } from '../types';
-import { calculateShannonEntropy } from './mathUtils';
 
 export interface ViterbiPath {
     states: RegimeState[];
@@ -129,28 +128,27 @@ export const findTopTacticalPaths = (
     
     const calibratedMatrix = calibrateBaumWelch(combinedSeq, intensities);
     
-    // 2. Define Transition Logic (Incorporating Baum-Welch Calibration + Time Decay)
-    const getTransitionProb = (fromIdx: number, toIdx: number, t: number) => {
-        let prob = calibratedMatrix[fromIdx][toIdx];
+    // 2. Define Transition Logic (Incorporating Baum-Welch Calibration + Dynamic Normalization)
+    const getTransitionProbs = (fromIdx: number, t: number) => {
+        let probs = [...calibratedMatrix[fromIdx]];
         
-        // Entropy-driven Turbulence Scaling
-        const homeEntropy = calculateShannonEntropy(home);
-        const awayEntropy = calculateShannonEntropy(away);
-        const turbulence = (homeEntropy + awayEntropy) / 2;
-        
-        if (fromIdx !== toIdx) {
-            prob *= (1 + turbulence); // High entropy boosts jump propensity
+        // Dynamic tactical shifts
+        for (let j = 0; j < probs.length; j++) {
+            // Exhaustion Sink: Pull towards LOW_INTENSITY (Idx 0) at end of match
+            if (t > 7 && j === 0) probs[j] += 0.15;
+            if (t > 8 && j === 0) probs[j] += 0.15;
         }
         
-        // Exhaustion Sink: Pull towards LOW_INTENSITY (Idx 0) at end of match
-        if (t > 7 && toIdx === 0) prob += 0.25;
-        
-        return prob;
+        // RE-NORMALIZE: Essential for "Conservation of Probability Mass"
+        const sum = probs.reduce((a, b) => a + b, 0);
+        return probs.map(p => p / (sum || 1e-10));
     };
 
-    // 2. Define Emission Probabilities (Expected Intensity vs State Definition)
+    // 2.1 Define Emission Probabilities (Gaussian Intensity Kernel)
     const baseIntensity = (alpha + beta) * 35;
-    const getEmissionProb = (regime: RegimeState['regime'], time: number) => {
+    const totalVolatility = (home.offensiveVolatility || 0.5) + (away.offensiveVolatility || 0.5);
+    
+    const getEmissionProb = (regime: RegimeState['regime']) => {
         const regimeIntensity: Record<string, number> = {
             'LOW_INTENSITY': 30,
             'HIGH_SATURATION': 50,
@@ -159,16 +157,17 @@ export const findTopTacticalPaths = (
         };
         
         const target = regimeIntensity[regime];
+        const sigma = 15 * (1 + totalVolatility * 0.5); // Variance scales with volatility
         const diff = Math.abs(baseIntensity - target);
         
-        // Probability of this state given match DNA (alpha/beta)
-        return Math.exp(-diff / 20);
+        // Robust Emission Kernel (Laplacian-driven for outlier resilience)
+        return (1 / (sigma * 2)) * Math.exp(-Math.abs(diff / sigma));
     };
 
     // 3. Viterbi Beam Search (Modified to find top N paths)
     let beam: ViterbiPath[] = regimes.map(s => ({
-        states: [{ regime: s, intensity: 0, confidence: 1 }], // Placeholder intensity
-        logProbability: Math.log(getEmissionProb(s, 0))
+        states: [{ regime: s, intensity: 0, confidence: 1 }], 
+        logProbability: Math.log(getEmissionProb(s) + 1e-12)
     }));
 
     for (let t = 1; t < steps; t++) {
@@ -176,11 +175,12 @@ export const findTopTacticalPaths = (
         for (const path of beam) {
             const lastState = path.states[path.states.length - 1].regime;
             const fromIdx = regimes.findIndex(r => r === lastState);
+            const transitionProbs = getTransitionProbs(fromIdx, t);
 
             for (let toIdx = 0; toIdx < regimes.length; toIdx++) {
                 const nextState = regimes[toIdx];
-                const transProb = getTransitionProb(fromIdx, toIdx, t);
-                const emissionProb = getEmissionProb(nextState, t);
+                const transProb = transitionProbs[toIdx];
+                const emissionProb = getEmissionProb(nextState);
                 
                 nextBeam.push({
                     states: [...path.states, { regime: nextState, intensity: 0, confidence: 1 }],
@@ -196,19 +196,24 @@ export const findTopTacticalPaths = (
     // 4. Final Cleanup (Inject Intensities and Normalization)
     const topPaths = beam.slice(0, topN).map(p => {
         const intensitySequence = p.states.map((s, i) => {
-            const base = {
+            const baseMapping: Record<string, number> = {
                 'LOW_INTENSITY': 30,
                 'HIGH_SATURATION': 50,
                 'FLUID_TRANSITION': 70,
                 'CHAOTIC_DECAY': 90
-            }[s.regime];
+            };
+            const base = baseMapping[s.regime];
             
-            // Random jitter within state boundaries
-            const jitter = (Math.random() * 10 - 5);
+            // Forensic Intensity Dispersion: Tied to total volatility instead of random jitter
+            // We use a deterministic pseudo-random seed based on the path probability to preserve "Match DNA"
+            const seed = Math.sin(p.logProbability + i) * 10000;
+            const pseudoRandom = seed - Math.floor(seed);
+            const dispersion = (pseudoRandom * 10 - 5) * (1 + totalVolatility);
+            
             return {
                 ...s,
-                intensity: base + jitter,
-                confidence: Math.exp(p.logProbability / steps) // Average confidence
+                intensity: Math.max(10, Math.min(100, base + dispersion)),
+                confidence: Math.exp(p.logProbability / steps) 
             };
         });
         

@@ -8,12 +8,7 @@ import {
     calculatePhysicalCeiling,
     calculateDixonColes,
     calculateCredibilitySignal,
-    auditPhysics,
-    BayesianPoissonAudit,
-    runWeightedFeatureAudit,
-    calculateShannonEntropy,
-    calculateEVTRisk,
-    calibrateMatchParameters
+    auditPhysics
 } from "./src/services/mathUtils";
 import { findTopTacticalPaths } from "./src/services/viterbiService";
 import { calculateDynamicRho, calculateMarketConfidence } from "./src/services/marketDataService";
@@ -21,10 +16,11 @@ import { IngestionService } from "./src/services/ingestionService";
 import { getTeamBaseline } from "./src/services/baselineDataService";
 import { AnalysisResult } from "./src/types";
 
-const CORE_MODEL = 'gemini-3.5-flash'; 
-const SEARCH_MODEL = 'gemini-3.5-flash'; 
-const FALLBACK_MODEL = 'gemini-3.5-flash'; 
-const LIGHT_MODEL = 'gemini-3.1-flash-lite'; 
+const CORE_MODEL = 'gemini-2.0-flash'; 
+const SEARCH_MODEL = 'gemini-2.0-flash'; 
+const FALLBACK_MODEL = 'gemini-2.0-flash-lite'; 
+const LIGHT_MODEL = 'gemini-1.5-flash'; 
+const EMERGENCY_MODEL = 'gemini-1.5-flash';
 const CACHE_FILE = path.join(process.cwd(), 'match_cache.json');
 
 // --- ADVANCED NETWORK INTELLIGENCE ---
@@ -45,8 +41,7 @@ const getMatchCacheKey = (req: { homeTeam: string; awayTeam: string; league: str
 };
 
 let modelHealth: Record<string, CircuitState> = {
-    ['gemini-3.5-flash']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 },
-    ['gemini-3.1-flash-lite']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 }
+    ['gemini-2.0-flash']: { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 }
 };
 
 let groundingCongestedUntil = 0;
@@ -98,11 +93,11 @@ const markSearchExhausted = (model: string, durationMs: number = 30000) => {
     saveStorage();
 };
 
-const markModelExhausted = (model: string, durationMs: number = 30000) => { 
+const markModelExhausted = (model: string, durationMs: number = 10000) => { 
     if (!modelHealth[model]) {
         modelHealth[model] = { exhaustedUntil: 0, congestedUntil: 0, failureCount: 0 };
     }
-    systemPressure = Math.min(MAX_PRESSURE, systemPressure + 2);
+    systemPressure = Math.min(MAX_PRESSURE, systemPressure + 1);
     console.warn(`[CIRCUIT_BREAKER] ${model} EXHAUSTED (Quota hit). Pressure: ${systemPressure}/10. Locking for ${durationMs / 1000}s`);
     modelHealth[model].exhaustedUntil = Date.now() + durationMs;
     modelHealth[model].lastFailureType = 'QUOTA';
@@ -139,9 +134,9 @@ const loadStorage = () => {
             // Restore health states
             if (STORAGE.health) {
                 Object.assign(modelHealth, STORAGE.health);
-                // Cleanse legacy models
+                // Cleanse legacy models (e.g. 1.0, 1.5, experimental)
                 Object.keys(modelHealth).forEach(m => {
-                    if (m.includes('1.5')) delete modelHealth[m];
+                    if (!m.includes('gemini-2.0') && !m.includes('gemini-exp')) delete modelHealth[m];
                 });
             }
             if (STORAGE.groundingCongestedUntil) {
@@ -517,7 +512,8 @@ const generatePseudoAnalysis = (req: { homeTeam: string; awayTeam: string; leagu
     const aProcessed = IngestionService.standardize({ ...away, name: req.awayTeam }, { understatBias: 1, sofaScoreBias: 1 });
 
     const dc = calculateDixonColes(hProcessed, aProcessed, req.league, 0.2, 0);
-    const regime = detectRegimeShifts(dc.alpha, dc.beta, hProcessed, aProcessed);
+    const topPaths = findTopTacticalPaths(dc.alpha, dc.beta, hProcessed, aProcessed, 3);
+    const regime = topPaths[0].states;
     const math = calculateProbability(hProcessed, aProcessed, dc.alpha, dc.beta, dc.rho, regime);
     
     const floorRaw = calculateStructuralFloor(hProcessed, aProcessed);
@@ -533,6 +529,7 @@ const generatePseudoAnalysis = (req: { homeTeam: string; awayTeam: string; leagu
         awayXG: dc.beta,
         rho: dc.rho,
         regimePath: regime,
+        topTacticalPaths: topPaths,
         structuralFloor: floorRaw.floor,
         physicalCeiling: ceilingRaw,
         structuralData: floorRaw,
@@ -542,7 +539,7 @@ const generatePseudoAnalysis = (req: { homeTeam: string; awayTeam: string; leagu
         marketReality: { syndicateFlow: "MEDIUM", smartMoneyTarget: "Equilibrium", marketDivergence: 0.0, sentimentScore: 0.5, openingOdds: { home: 2.0, draw: 3.4, away: 3.6 }, currentOdds: { home: 2.0, draw: 3.4, away: 3.6 }, marketMovementSignal: 0 },
         mirrorMatches: [],
         prosecution: { contradictions: ["Signal derived from statistical baselines"], riskScore: 0.3 },
-        modelAudit: { bayesianPoisson: 0.75, weightedFeatureSignal: 0.75, recursiveFilterMomentum: 0.75, entropy: 0.75, evtRisk: 0.75 },
+        modelAudit: { forensicIntegrity: 0.75, recursiveFilterMomentum: 0.75, noiseRatio: 0.25 },
         killSwitchTriggered: false,
         maxVariance: 0.2,
         modelMode: 'POISSON_FALLBACK',
@@ -603,15 +600,15 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         const strategies = [
             { 
                 name: 'FORENSIC_GROUNDING_3.0', 
-                model: 'gemini-3.5-flash', 
+                model: CORE_MODEL, 
                 config: { tools: [{ googleSearch: {} }] }, 
                 enableSearch: true,
-                retries: 1, // Reduced retries for search to fail fast and move to core
+                retries: 1, 
                 active: nowMs > groundingCongestedUntil && !isWellKnownMatchup && !isGroundingCached && systemPressure < 4
             },
             { 
                 name: 'INSTITUTIONAL_CORE_3.0', 
-                model: 'gemini-3.5-flash', 
+                model: CORE_MODEL, 
                 config: {}, 
                 enableSearch: false,
                 retries: 2, 
@@ -619,10 +616,18 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             },
             { 
                 name: 'SAFE_HARBOR_LITE', 
-                model: 'gemini-3.1-flash-lite', 
+                model: LIGHT_MODEL, 
                 config: {}, 
                 enableSearch: false,
                 retries: 3, 
+                active: true 
+            },
+            { 
+                name: 'EMERGENCY_RECOVERY', 
+                model: EMERGENCY_MODEL, 
+                config: {}, 
+                enableSearch: false,
+                retries: 5, 
                 active: true 
             }
         ];
@@ -818,12 +823,6 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         let finalFloor = data.calibration.aiStructuralFloor || structuralData.floor;
         let finalCeiling = data.calibration.aiPhysicalCeiling || physicalCeilingRaw;
 
-        if (data.homeStats.matchHistory && data.awayStats.matchHistory) {
-            const cal = calibrateMatchParameters(data.homeStats.matchHistory, data.awayStats.matchHistory);
-            finalFloor = (finalFloor * 0.3) + (cal.structuralFloor * 0.7);
-            finalCeiling = (finalCeiling * 0.3) + (cal.physicalCeiling * 0.7);
-        }
-        
         // Recalibrate based on AI confidence in bottlenecks
         if (data.calibration.aiStructuralFloor) finalFloor = (finalFloor + data.calibration.aiStructuralFloor) / 2;
         if (data.calibration.aiPhysicalCeiling) finalCeiling = (finalCeiling + data.calibration.aiPhysicalCeiling) / 2;
@@ -836,17 +835,8 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         // modelMode is determined by the Data Integrity Gate above
 
         // Advanced Model Audits
-        const bayesianHome = new BayesianPoissonAudit(data.homeStats.avgXG);
-        const bayesianAway = new BayesianPoissonAudit(data.awayStats.avgXG);
-        const bayesianPoisson = (bayesianHome.getSurety() + bayesianAway.getSurety()) / 2;
+        const credibilitySignal = calculateCredibilitySignal(data.homeStats, data.awayStats);
         
-        const weightedAudit = runWeightedFeatureAudit(data.homeStats, data.awayStats);
-        const entropy = (calculateShannonEntropy(data.homeStats) + calculateShannonEntropy(data.awayStats)) / 2;
-        const evtRisk = calculateEVTRisk(data.homeStats, data.awayStats);
-        
-        // Momentum relevance is tied to the Signal Precision in this context
-        const filterMomentum = signalPrecision;
-
         const analysisResult: AnalysisResult = {
             probability: math.probability,
             summary: data.summary,
@@ -868,11 +858,9 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             mirrorMatches: data.mirrorMatches,
             prosecution: data.prosecution,
             modelAudit: {
-                bayesianPoisson,
-                weightedFeatureSignal: weightedAudit,
-                recursiveFilterMomentum: filterMomentum,
-                entropy,
-                evtRisk
+                forensicIntegrity: credibilitySignal,
+                recursiveFilterMomentum: signalPrecision, 
+                noiseRatio: 1 - credibilitySignal
             },
             killSwitchTriggered,
             maxVariance,

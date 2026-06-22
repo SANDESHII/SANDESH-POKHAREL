@@ -1,11 +1,10 @@
 
 import { TeamStats, RegimeState, MatchContext, MarketReality, MirrorMatch, ProsecutionCase, ModelAudit } from '../types';
 import { SimulationResult, MarketAudit } from './monteCarloService';
-import { calculateEVTRisk } from './mathUtils';
 
 export interface MedallionResult {
     suretyScore: number;
-    evtTailRisk: number;
+    forensicIntegrity: number;
     signalPrecision: number;
     physicsAudit: { metAudit: boolean, saturation: number };
     contextualVolatility: number;
@@ -33,38 +32,24 @@ export interface MedallionResult {
 
 /**
  * Contextual Volatility Audit
- * Quantifies non-statistical friction (Rivalry, Stakes, Referee) into a Volatility Coefficient.
- * This is the "Soft Data" layer purified into a numerical tax.
  */
 export const calculateContextualVolatility = (context: MatchContext): number => {
     let friction = 0.2;
-    
-    // Factor in rivalry (The "Derby" effect)
     friction += (context.historicalRivalry / 10) * 0.3;
-    
-    // Factor in stakes (The "Desperation" effect)
     const stakesLower = context.stakes.toLowerCase();
     if (stakesLower.includes('final') || stakesLower.includes('relegation') || stakesLower.includes('derby')) {
         friction += 0.2;
     }
-    
-    // Factor in referee (The "Strictness" effect)
-    if (context.referee.toLowerCase().includes('strict') || context.referee.toLowerCase().includes('lahoz')) {
-        friction += 0.1;
-    }
-
     return Math.min(1.0, friction);
 };
 
 /**
- * Medallion Surety Calculation
- * The final forensic seal that cross-references all layers against Market Reality.
+ * Medallion Surety Calculation (Forensic Protocol)
  */
 export const calculateMedallionSurety = (
     simulation: SimulationResult,
     regimePath: RegimeState[],
     structuralData: { floor: number, cushion: number },
-    evtRisk: number,
     signalPrecision: number,
     physics: { metAudit: boolean, saturation: number },
     market: MarketReality,
@@ -73,253 +58,120 @@ export const calculateMedallionSurety = (
     prosecution: ProsecutionCase,
     modelAudit: ModelAudit
 ): MedallionResult => {
-    // 1. Adaptive Benchmarks (Derived from Signal Stability and Volatility)
     const contextualVolatility = calculateContextualVolatility(context);
     
     const adpFloorThreshold = 2.15 + (contextualVolatility * 0.35); 
     const adpSurvivalThreshold = 97 - (signalPrecision * 3); 
     const adpPrecisionThreshold = 0.90 + (contextualVolatility * 0.03);
-    const adpProsecutionThreshold = 20 - (contextualVolatility * 14); 
     const adpSaturationThreshold = 0.60 - (contextualVolatility * 0.20); 
 
-    // 2. Calculate Mirror Match Similarity (Ancestral Law)
-    // We check if historical outcomes match the current "Floor Verdict".
     const successfulMirrors = mirrorMatches.filter(m => m.result.includes('Win') || m.result.includes('Over') || m.result.includes('Goals')).length;
     const mirrorSimilarity = (successfulMirrors / (mirrorMatches.length || 1)) * 100;
 
-    // Neural Divergence Analysis (GOD TIER GATE)
-    // We check for "Module Conflict". If modules disagree, Elite verdicts are revoked.
-    const physicsMass = physics.metAudit ? 1 : 0;
-    const statisticalMass = simulation.survivalRating > 85 ? 1 : 0;
-    const marketMass = market.syndicateFlow === 'HIGH' ? 1 : 0;
-    const mirrorMass = mirrorSimilarity > 80 ? 1 : 0;
-    
+    const physicsMass = physics.metAudit ? 1 : (physics.integrityScore > 0.8 ? 0.5 : 0);
+    const statisticalMass = Math.min(1.0, Math.max(0, (simulation.survivalRating - 40) / 50));
+    const marketMass = market.syndicateFlow === 'HIGH' ? 1 : (market.syndicateFlow === 'MEDIUM' ? 0.6 : 0.2);
+    const mirrorMass = Math.min(1.0, Math.max(0, (mirrorSimilarity - 40) / 50));
     const neuralCoherence = (physicsMass + statisticalMass + marketMass + mirrorMass) / 4;
 
-    // 3. Prosecution Risk (The Inversion Penalty)
     const prosecutionRisk = prosecution.riskScore;
-
-    // 4. Calculate Convergence (How well do the layers agree?)
     const combinedIntensity = regimePath.reduce((acc, s) => acc + s.intensity, 0) / regimePath.length;
     const floorAgreement = Math.abs(structuralData.floor - (combinedIntensity / 40));
     
-    // 5. Base Surety from Monte Carlo Divergence & Survival Rating
-    // We factor in information noise (Entropy) and component confidence.
-    const neuralMass = (modelAudit.weightedFeatureSignal * 0.4) + (modelAudit.bayesianPoisson * 0.4) + ((1 - modelAudit.entropy) * 0.2);
-    
-    let suretyScore = (simulation.probability * 0.3) + (simulation.survivalRating * 0.3) + (mirrorSimilarity * 0.2) + (neuralMass * 20);
-    let localAuditNote = "Standard audit complete.";
+    // Base Surety: Strictly aligned with Forensic Integrity
+    let suretyScore = (simulation.probability * 0.3) + (simulation.survivalRating * 0.3) + (mirrorSimilarity * 0.2) + (modelAudit.forensicIntegrity * 20);
+    let localAuditNote = "Forensic audit complete.";
 
-    // Apply Prosecution Tax (Inversion Audit)
     if (prosecutionRisk > 60) {
         suretyScore -= (prosecutionRisk * 0.25);
-        localAuditNote = "INVERSION AUDIT: High prosecution risk detected. Structural contradictions found.";
+        localAuditNote = "INVERSION AUDIT: Structural contradictions detected.";
     }
-
-    // 3b. Tactical Pruning Audit (Layer 3)
-    // We use the Regime Path to prune "Statistical Hallucinations".
-    // If the path is "Locked" in a regime, we penalize divergence that contradicts that state.
-    const pathRegimes = regimePath.map(p => p.regime);
-    const isLockedLow = pathRegimes.every(r => r === 'LOW_INTENSITY' || r === 'HIGH_SATURATION');
-    const isLockedHigh = pathRegimes.every(r => r === 'FLUID_TRANSITION' || r === 'CHAOTIC_DECAY');
-
-    if (isLockedLow && simulation.divergence > 15) {
-        // Pruning high-scoring hallucinations in a low-intensity lock
-        suretyScore -= 20;
-        localAuditNote = "TACTICAL PRUNING: High divergence detected in low-intensity regime. Pruning hallucinations.";
-    }
-    
-    // 4. Signal Precision Audit (Layer 2)
-    // Measures the "Noise" in the signal. If precision is low (wide credible interval), we apply a "Hard Ceiling".
-    let precisionCeiling = 100;
 
     if (signalPrecision < 0.5) {
-        precisionCeiling = 65; // Hard Ceiling for Noisy Data
-        localAuditNote = "REJECTED: Signal precision too low (Uncertainty Gap). Data is structurally noisy.";
-    } else if (signalPrecision < 0.7) {
-        precisionCeiling = 80; // Soft Ceiling for Moderate Noise
-    }
-    
-    suretyScore = Math.min(suretyScore, precisionCeiling);
+        suretyScore = Math.min(suretyScore, 65);
+        localAuditNote = "REJECTED: Signal precision too low.";
+    } 
 
-    // 5. Purified Physics Audit (Layer 4)
-    // If the match fails the MET Audit or hits Spatial Saturation, we "Throttle" the surety.
     if (!physics.metAudit) {
-        suretyScore -= 25; // Increased penalty for physical impossibility
-        localAuditNote = "PHYSICS AUDIT FAILED: Minimum Execution Time (MET) exceeds tactical capacity.";
+        suretyScore -= 25;
+        localAuditNote = "PHYSICS AUDIT FAILED: MET exceeds tactical capacity.";
     }
     
-    // Spatial Saturation Throttle
-    if (physics.saturation > adpSaturationThreshold) {
-        suretyScore -= 15;
-        localAuditNote = "PHYSICS AUDIT: Spatial Saturation exceeds adaptive threshold. Pitch is in a 'Solid-State'.";
+    if (contextualVolatility > 0.85 && signalPrecision < 0.75) {
+        suretyScore -= 40; 
+        localAuditNote = "VOLATILITY KILL SWITCH: Extreme noise detected.";
     }
 
-    // 6. Contextual Volatility Tax
-    // High friction (Derbies, Finals) taxes the surety score heavily.
-    if (contextualVolatility > 0.65) {
-        suretyScore -= 20;
-        if (contextualVolatility > 0.85 && signalPrecision < 0.75) {
-            suretyScore -= 30; // Extreme Volatility Kill Switch
-            localAuditNote = "VOLATILITY KILL SWITCH: Extreme contextual noise with unstable signal.";
-        }
-    }
-
-    // 7. Market Reality Tally (SYNDICATE AUDIT)
-    if (market.syndicateFlow === 'HIGH') {
-        suretyScore += 10;
-    } else if (market.syndicateFlow === 'LOW') {
-        suretyScore -= 15;
-    }
-
-    // 6. Market Auditor Scoring
-    // We rank every market based on Raw Prob, Regime Alignment, and Signal Precision.
     const scoredMarkets = simulation.marketAudits.map(audit => {
-        let alignment = 0;
-        const name = audit.name.toUpperCase();
-        
-        // Regime Alignment Logic
-        const pathRegimes = regimePath.map(p => p.regime);
-        const hasHighIntensity = pathRegimes.includes('FLUID_TRANSITION') || pathRegimes.includes('CHAOTIC_DECAY');
-        const hasLowIntensity = pathRegimes.includes('LOW_INTENSITY') || pathRegimes.includes('HIGH_SATURATION');
-
-        if (name.includes('OVER')) {
-            alignment = hasHighIntensity ? 20 : (hasLowIntensity ? -30 : 0);
-        }
-
-        // Final Surety Score for this specific market
-        // Regime Alignment acts as a "Tactical Pruning" multiplier
-        const alignmentMultiplier = 1 + (alignment / 100);
-        const marketSurety = ((audit.rawProb * 0.6) + (signalPrecision * 100) * 0.4) * alignmentMultiplier;
-        
+        const marketSurety = ((audit.rawProb * 0.6) + (signalPrecision * 100) * 0.4);
         return {
             ...audit,
-            regimeAlignment: alignment,
+            regimeAlignment: 0,
             suretyScore: Math.min(100, Math.max(0, marketSurety))
         };
     });
 
-    // Find the Best Bet (Highest Surety Score, biased towards Fortress Corridor)
     const bestBet = scoredMarkets.reduce((prev, current) => {
-        const isCorridor = current.name.includes('OVER 1.5') || current.name.includes('UNDER 3.5');
-        const prevIsCorridor = prev.name.includes('OVER 1.5') || prev.name.includes('UNDER 3.5');
-        
-        // Boost corridor markets if they are close (within 5%)
-        const currentScore = isCorridor ? (current.suretyScore + 5) : current.suretyScore;
-        const prevScore = prevIsCorridor ? (prev.suretyScore + 5) : prev.suretyScore;
-        
-        return (currentScore > prevScore) ? current : prev;
+        return (current.suretyScore > prev.suretyScore) ? current : prev;
     }, scoredMarkets[0]);
 
-    // 7. Apply Penalties for Structural Conflict
     if (floorAgreement > 1.5) suretyScore -= 20; 
-    if (evtRisk > 70) suretyScore -= 15; 
     
     suretyScore = Math.min(100, Math.max(0, suretyScore));
 
-    // 7b. P10 Structural Estimate (Probabilistic Lower Bound)
-    // We derive this directly from the Structural Floor mass.
     const floorValue = structuralData.floor;
     let p10Verdict = "P10 ESTIMATE: OVER 0.5";
     if (floorValue > 2.8) p10Verdict = "P10 ESTIMATE: OVER 2.5";
     else if (floorValue > 1.8) p10Verdict = "P10 ESTIMATE: OVER 1.5";
     
-    // Confidence is keyed to entropy and survival.
     const p10Confidence = Math.min(100, Math.max(0, (simulation.survivalRating * 0.7) + (signalPrecision * 30)));
     
-    // 7c. Mastery Corridor (Nuclear Fortress Anchor)
     let corridorAnchor: 'OVER 1.5' | 'UNDER 3.5' | 'NEUTRAL' = 'NEUTRAL';
     let corridorSurety = 0;
 
-    // Fortress Logic: Prioritize the 1.5 - 3.5 corridor
-    // Strong Over 1.5 Signal: High survival and Structural Floor mass
-    if (simulation.survivalRating > 85 && structuralData.floor > 1.85) {
+    if (simulation.survivalRating > 72 && structuralData.floor > 1.35) {
         corridorAnchor = 'OVER 1.5';
         corridorSurety = (simulation.survivalRating * 0.6) + (mirrorSimilarity * 0.4);
     } 
-    // Strong Under 3.5 Signal: Extreme Market Saturation and Low Signal Precision (Conservative Ceiling)
-    else if (physics.saturation > 0.65 && evtRisk < 40 && structuralData.floor < 2.5) {
+    else if (physics.saturation > 0.52 && structuralData.floor < 2.9) {
         corridorAnchor = 'UNDER 3.5';
-        
-        // Strict Mathematical Rejection: If Entropy > 0.75, signal is pure noise.
-        if (modelAudit.entropy > 0.75) {
-            corridorSurety = 0;
-            localAuditNote = "REJECTED (UNPREDICTABLE CHAOS): Entropy > 0.75. Volatility exceeds Under 3.5 boundary stability.";
-        } else {
-            corridorSurety = (100 - evtRisk) * 0.4 + (physics.saturation * 60);
-        }
-    }
-    // High Volatility fallback to Neutral
-    else if (contextualVolatility > 0.7) {
-        corridorAnchor = 'NEUTRAL';
-        corridorSurety = 0;
+        corridorSurety = (100 - (1 - signalPrecision) * 100) * 0.4 + (physics.saturation * 60);
     }
 
-    // 8. Assign Forensic Verdict (TRIPLE-LOCK INTEGRATION)
     let verdict: 'GOLD' | 'SILVER' | 'BRONZE' | 'VOID' = 'BRONZE';
-    let auditNote = localAuditNote;
+    const isNuclearFortress = (simulation.survivalRating > adpSurvivalThreshold && signalPrecision > adpPrecisionThreshold && neuralCoherence === 1.0);
 
-    const hasNuclearFloor = floorValue > 1.8; // Must be at least Over 1.5 Bolted
-    const isProsecutorHappy = prosecutionRisk < 45; // Low risk from Inversion Audit
-    const isStressTestStrong = simulation.survivalRating > 88; // High survival in disaster simulations
-    const isEntropyHigh = modelAudit.entropy > 0.75; // Unpredictable Chaos threshold
-
-    // 8b. Statistical Fortress Protocol (Convergence Check)
-    // We check for high-confidence alignment while applying the Adaptive Thresholds
-    // derived above to prevent overfitting to specific decimal points.
-
-    const fortressChecks = [
-        { met: floorValue > adpFloorThreshold, label: `Adaptive Floor > ${adpFloorThreshold.toFixed(2)}` },
-        { met: simulation.survivalRating > adpSurvivalThreshold, label: `Survival > ${adpSurvivalThreshold.toFixed(1)}%` },
-        { met: signalPrecision > adpPrecisionThreshold, label: `Signal Stability > ${adpPrecisionThreshold.toFixed(2)}` },
-        { met: prosecutionRisk < adpProsecutionThreshold, label: `Inversion Risk < ${adpProsecutionThreshold.toFixed(0)}%` },
-        { met: physics.metAudit && physics.saturation < adpSaturationThreshold, label: `Physics: Spatial Capacity Guard` },
-        { met: market.syndicateFlow === 'HIGH', label: "Hard Gate: Professional Syndicate Alignment" },
-        { met: neuralCoherence >= 0.75, label: "Neural Coherence: Module Alignment" },
-        { met: modelAudit.weightedFeatureSignal > 0.6, label: "Weighted Feature Confidence" }
-    ];
-
-    const isNuclearFortress = fortressChecks.every(c => c.met) && neuralCoherence === 1.0;
-    const fortressReasoning = fortressChecks.filter(c => c.met).map(c => c.label);
-
-    // Hard Gate: No GOLD/Fortress without Syndicate Alignment, Neural Coherence, or Elite Precision
-    const hasSyndicateGate = market.syndicateFlow === 'HIGH';
-
-    if (signalPrecision < 0.45 || neuralCoherence < 0.5 || isEntropyHigh) {
+    if (signalPrecision < 0.45 || neuralCoherence < 0.25) {
         verdict = 'VOID';
-        auditNote = isEntropyHigh 
-            ? "REJECTED: Unpredictable Chaos (Entropy > 0.75). Data is pure noise, no safe transaction possible." 
-            : "REJECTED: Signal precision or Neural Coherence too low. Systemic data rupture.";
+        localAuditNote = "REJECTED: Systemic data rupture.";
     } else if (isNuclearFortress) {
         verdict = 'GOLD';
-        auditNote = "NUCLEAR FORTRESS: Absolute convergence detected in the 1.5-3.5 corridor.";
-    } else if (suretyScore > 92 && isStressTestStrong && (hasSyndicateGate || signalPrecision > 0.8) && physics.metAudit && neuralCoherence >= 0.75) {
-        verdict = 'GOLD';
-        auditNote = "MEDALLION SURETY: Elite performance with stabilized signal precision and module alignment.";
+        localAuditNote = "NUCLEAR FORTRESS: Absolute forensic convergence.";
     } else if (suretyScore > 82 && physics.metAudit && neuralCoherence >= 0.5) {
         verdict = 'SILVER';
-        auditNote = "Strong structural alignment with tightened neural controls.";
-    } else if (suretyScore < 45 || evtRisk > 85 || neuralCoherence < 0.2) {
+    } else if (suretyScore > 65) {
+        verdict = 'BRONZE';
+    } else {
         verdict = 'VOID';
-        auditNote = "Structural rupture, extreme tail risk, or neural divergence detected.";
+        localAuditNote = "AUDIT: Insufficient pattern convergence.";
     }
 
     return {
         suretyScore,
-        evtTailRisk: evtRisk,
+        forensicIntegrity: modelAudit.forensicIntegrity,
         signalPrecision,
         physicsAudit: physics,
         contextualVolatility,
         verdict,
-        auditNote,
+        auditNote: localAuditNote,
         isMedallionSurety: verdict === 'GOLD',
         isNuclearFortress,
-        fortressReasoning,
+        fortressReasoning: [],
         cushionFloor: structuralData.cushion,
         p10StructuralEstimate: {
             verdict: p10Verdict,
             confidence: p10Confidence,
-            reasoning: `P10 ESTIMATE: Match mass of ${floorValue.toFixed(2)} indicates a high-confidence lower bound.`
+            reasoning: `P10 ESTIMATE: Match mass of ${floorValue?.toFixed(2) || '0.00'} detected.`
         },
         masteryCorridor: {
             anchor: corridorAnchor,
@@ -329,6 +181,6 @@ export const calculateMedallionSurety = (
         bestBet,
         survivalRating: simulation.survivalRating,
         mirrorSimilarity,
-        prosecutionRisk: prosecution.riskScore
+        prosecutionRisk
     };
 };

@@ -30,13 +30,11 @@ import { createRoot } from 'react-dom/client';
 import { motion } from 'motion/react';
 import { 
     Info,
-    History,
     Activity
 } from 'lucide-react';
 import { AnalysisResult } from './types';
 import { runMonteCarloSimulation } from './services/monteCarloService';
 import { calculateMedallionSurety } from './services/suretyService';
-import { calibrateMatchParameters } from './services/mathUtils';
 
 // Components
 import { Header } from './components/Header';
@@ -97,12 +95,6 @@ const App: React.FC = () => {
         return () => clearInterval(interval);
     }, [loadingAnalysis]);
 
-    // Data Processing (Lightweight)
-    const calibratedData = useMemo(() => {
-        if (!analysis || !analysis.homeStats.matchHistory || !analysis.awayStats.matchHistory) return null;
-        return calibrateMatchParameters(analysis.homeStats.matchHistory, analysis.awayStats.matchHistory);
-    }, [analysis]);
-
     // Asynchronous Simulation (Heavyweight)
     useEffect(() => {
         if (!analysis) {
@@ -111,8 +103,8 @@ const App: React.FC = () => {
         }
 
         const runAsyncSimulation = async () => {
-            const floor = calibratedData?.structuralFloor || analysis.structuralFloor || 1.2;
-            const ceiling = calibratedData?.physicalCeiling || analysis.physicalCeiling || 6.0;
+            const floor = analysis.structuralFloor || 1.2;
+            const ceiling = analysis.physicalCeiling || 6.0;
 
             // Yield thread before running heavy computation
             setTimeout(async () => {
@@ -123,8 +115,8 @@ const App: React.FC = () => {
                     ceiling,
                     analysis.homeStats.name,
                     analysis.awayStats.name,
-                    calibratedData?.homeLambda || analysis.homeXG || 1.35,
-                    calibratedData?.awayMu || analysis.awayXG || 1.35,
+                    analysis.homeXG || 1.35,
+                    analysis.awayXG || 1.35,
                     userConfidence,
                     analysis.rho,
                     analysis.homeStats.offensiveVolatility || 0.5,
@@ -138,7 +130,7 @@ const App: React.FC = () => {
         };
 
         runAsyncSimulation();
-    }, [analysis, calibratedData, userConfidence]);
+    }, [analysis, userConfidence]);
 
     const surety = useMemo(() => {
         if (!analysis || !simulation) return null;
@@ -146,7 +138,6 @@ const App: React.FC = () => {
             simulation, 
             analysis.regimePath, 
             analysis.structuralData, 
-            analysis.modelAudit.evtRisk, 
             analysis.signalPrecision,
             analysis.physics,
             analysis.marketReality,

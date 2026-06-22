@@ -37,8 +37,8 @@ export const MatchVisualizer: React.FC<MatchVisualizerProps> = ({ path }) => {
                             <div className="bg-zinc-950 border border-emerald-900/50 p-3 rounded-xl shadow-2xl whitespace-nowrap">
                                 <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-2 pb-1 border-b border-emerald-900/20">{step.regime.replace(/_/g, ' ')}</p>
                                 <div className="flex items-center justify-between gap-6">
-                                    <span className="text-[10px] text-emerald-900 font-bold uppercase">Intensity: <span className="text-white">{step.intensity.toFixed(1)}</span></span>
-                                    <span className="text-[10px] text-emerald-900 font-bold uppercase">Surety: <span className="text-emerald-500">{(step.confidence * 100).toFixed(0)}%</span></span>
+                                    <span className="text-[10px] text-emerald-900 font-bold uppercase">Intensity: <span className="text-white">{step.intensity?.toFixed(1) || '0.0'}</span></span>
+                                    <span className="text-[10px] text-emerald-900 font-bold uppercase">Surety: <span className="text-emerald-500">{((step.confidence || 0) * 100).toFixed(0)}%</span></span>
                                 </div>
                             </div>
                         </div>

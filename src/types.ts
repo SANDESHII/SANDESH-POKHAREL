@@ -122,9 +122,7 @@ export interface CalibrationMatrix {
 }
 
 export interface ModelAudit {
-    bayesianPoisson: number;
-    weightedFeatureSignal: number;
+    forensicIntegrity: number;
     recursiveFilterMomentum: number;
-    entropy: number;
-    evtRisk: number;
+    noiseRatio: number;
 }
