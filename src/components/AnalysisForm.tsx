@@ -19,8 +19,18 @@ export const AnalysisForm: React.FC<AnalysisFormProps> = ({
     home, setHome, away, setAway, league, setLeague, time, setTime, 
     onAnalyze, loading 
 }) => {
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!loading && home && away) {
+            onAnalyze();
+        }
+    };
+
     return (
-        <div className="bg-zinc-950 p-12 rounded-2xl border border-emerald-900/30 shadow-2xl backdrop-blur-sm max-w-5xl mx-auto">
+        <form 
+            onSubmit={handleSubmit}
+            className="bg-zinc-950 p-12 rounded-2xl border border-emerald-900/30 shadow-2xl backdrop-blur-sm max-w-5xl mx-auto"
+        >
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-10">
                 <div className="space-y-4">
                     <label className="text-[10px] uppercase tracking-[0.3em] text-emerald-900 font-black flex items-center gap-2">
@@ -76,7 +86,7 @@ export const AnalysisForm: React.FC<AnalysisFormProps> = ({
             </div>
 
             <button 
-                onClick={onAnalyze}
+                type="submit"
                 disabled={loading || !home || !away}
                 className={`w-full mt-16 py-8 rounded-xl flex items-center justify-center gap-4 font-black tracking-[0.5em] text-sm transition-all ${
                     loading || !home || !away
@@ -93,6 +103,6 @@ export const AnalysisForm: React.FC<AnalysisFormProps> = ({
                     'COMMENCE ANALYSIS'
                 )}
             </button>
-        </div>
+        </form>
     );
 };

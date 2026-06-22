@@ -10,7 +10,7 @@ import {
     calculateCredibilitySignal,
     auditPhysics,
     BayesianPoissonAudit,
-    runGradientBoostingAudit,
+    runWeightedFeatureAudit,
     calculateShannonEntropy,
     calculateEVTRisk,
     calibrateMatchParameters
@@ -62,7 +62,7 @@ if (typeof setInterval !== 'undefined') {
             systemPressure = Math.max(0, systemPressure - 1);
             console.log(`[SYSTEM] Pressure decaying naturally. Now: ${systemPressure}/10`);
         }
-    }, 180000); // 3 minute decay cycle
+    }, 60000); // 1 minute decay cycle (was 3)
 }
 
 const isModelHealthy = (model: string, needsSearch: boolean = false) => {
@@ -75,6 +75,9 @@ const isModelHealthy = (model: string, needsSearch: boolean = false) => {
     
     // Search level check
     if (needsSearch && (now <= groundingCongestedUntil || (health.searchExhaustedUntil && now <= health.searchExhaustedUntil))) return false;
+    
+    // Search specifically has a lower pressure threshold but we increase it
+    if (needsSearch && systemPressure >= 6) return false;
     
     return systemPressure < MAX_PRESSURE;
 };
@@ -247,7 +250,7 @@ class MatchQueue {
                             return;
                         }
 
-                        if (isSearchLimit || (isRateLimit && useSearch)) {
+                        if (isSearchLimit || (isRateLimit && useSearch) || (useSearch && errMessage.includes('quota'))) {
                             markSearchExhausted(model, 300000); // 5 mins search lockout for stability
                             if (attempt >= retries) {
                                 reject(new Error("SEARCH_QUOTA_EXCEEDED"));
@@ -517,6 +520,9 @@ const generatePseudoAnalysis = (req: { homeTeam: string; awayTeam: string; leagu
     const regime = detectRegimeShifts(dc.alpha, dc.beta, hProcessed, aProcessed);
     const math = calculateProbability(hProcessed, aProcessed, dc.alpha, dc.beta, dc.rho, regime);
     
+    const floorRaw = calculateStructuralFloor(hProcessed, aProcessed);
+    const ceilingRaw = calculatePhysicalCeiling(hProcessed, aProcessed, regime);
+
     return {
         probability: math.probability,
         summary: `[HEALED] Forensic analysis derived from Institutional Archives. Our real-time data ingestion stream is currently experiencing high network pressure (Congestion). We have automatically failed over to high-fidelity structural baselines to ensure analytical continuity. Probabilities are anchored to historical performance vectors and calibrated decay models.`,
@@ -527,21 +533,21 @@ const generatePseudoAnalysis = (req: { homeTeam: string; awayTeam: string; leagu
         awayXG: dc.beta,
         rho: dc.rho,
         regimePath: regime,
-        structuralFloor: 1.0,
-        physicalCeiling: 3.5,
-        structuralData: { floor: 1.0, cushion: 0.5 },
-        signalPrecision: 0.85,
-        physics: { metAudit: true, saturation: 0.8, integrityScore: 0.9 },
-        context: { weather: "Clear", referee: "Standard", stadium: "Historical", historicalRivalry: 0.5, stakes: "League", confidenceVector: 0.8 },
+        structuralFloor: floorRaw.floor,
+        physicalCeiling: ceilingRaw,
+        structuralData: floorRaw,
+        signalPrecision: 0.75, // Lowered precision for fallback
+        physics: { metAudit: dc.alpha + dc.beta > 2.0, saturation: Math.max(0.2, 0.6 - ((dc.alpha + dc.beta) * 0.1)), integrityScore: 0.8 },
+        context: { weather: "Standard", referee: "Neutral", stadium: "Neutral", historicalRivalry: 0.3, stakes: "Standard", confidenceVector: 0.7 },
         marketReality: { syndicateFlow: "MEDIUM", smartMoneyTarget: "Equilibrium", marketDivergence: 0.0, sentimentScore: 0.5, openingOdds: { home: 2.0, draw: 3.4, away: 3.6 }, currentOdds: { home: 2.0, draw: 3.4, away: 3.6 }, marketMovementSignal: 0 },
         mirrorMatches: [],
-        prosecution: { contradictions: ["Signal derived from statistical baselines"], riskScore: 0.2 },
-        modelAudit: { bayesianPoisson: 0.85, gradientBoosting: 0.85, neuralMemory: 0.85, entropy: 0.85, evtRisk: 0.85 },
+        prosecution: { contradictions: ["Signal derived from statistical baselines"], riskScore: 0.3 },
+        modelAudit: { bayesianPoisson: 0.75, weightedFeatureSignal: 0.75, recursiveFilterMomentum: 0.75, entropy: 0.75, evtRisk: 0.75 },
         killSwitchTriggered: false,
-        maxVariance: 0.1,
+        maxVariance: 0.2,
         modelMode: 'POISSON_FALLBACK',
         matchContextFlag: 'Standard',
-        calibration: { understatBias: 1, sofaScoreBias: 1, calibrationConfidence: 0.8 },
+        calibration: { understatBias: 1, sofaScoreBias: 1, calibrationConfidence: 0.6 },
         groundingStatus: 'DEGRADED',
         ingestedDataSummary: "Emergency fallback to Institutional Baselines. Real-time search data stream is currently restricted by system congestion."
     };
@@ -601,7 +607,7 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
                 config: { tools: [{ googleSearch: {} }] }, 
                 enableSearch: true,
                 retries: 1, // Reduced retries for search to fail fast and move to core
-                active: nowMs > groundingCongestedUntil && !isWellKnownMatchup && !isGroundingCached && systemPressure < 2
+                active: nowMs > groundingCongestedUntil && !isWellKnownMatchup && !isGroundingCached && systemPressure < 4
             },
             { 
                 name: 'INSTITUTIONAL_CORE_3.0', 
@@ -623,14 +629,18 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
 
         let response;
         let lastError;
-        let groundingStatus: 'OPTIMAL' | 'DEGRADED' | 'FAILED' = 'FAILED';
+        let groundingStatus: 'OPTIMAL' | 'DEGRADED' | 'FAILED' | 'QUOTA_EXCEEDED' | 'SEARCH_COOLDOWN' = 'FAILED';
 
         for (const strategy of strategies) {
             // Check health specifically for the needs of the strategy
             const isHealthy = isModelHealthy(strategy.model, strategy.enableSearch);
+            const isSearchBlocked = strategy.enableSearch && Date.now() < groundingCongestedUntil;
 
-            if (!strategy.active || !isHealthy) {
-                console.log(`[ROUTING] Skipping ${strategy.name}: ${!strategy.active ? 'Inactive' : 'Model or Search not healthy'}`);
+            if (!strategy.active || !isHealthy || (strategy.enableSearch && isSearchBlocked)) {
+                if (strategy.enableSearch && isSearchBlocked) {
+                    groundingStatus = 'SEARCH_COOLDOWN';
+                }
+                console.log(`[ROUTING] Skipping ${strategy.name}: ${!strategy.active ? 'Inactive' : isSearchBlocked ? 'Search Blocked' : 'Model not healthy'}`);
                 continue;
             }
 
@@ -669,16 +679,21 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
                     };
                 }
 
-                groundingStatus = strategy.name === 'FORENSIC_GROUNDING_3.0' ? 'OPTIMAL' : 'DEGRADED';
+                if (strategy.name === 'FORENSIC_GROUNDING_3.0') {
+                    groundingStatus = 'OPTIMAL';
+                } else if (groundingStatus !== 'QUOTA_EXCEEDED' && groundingStatus !== 'SEARCH_COOLDOWN') {
+                    groundingStatus = 'DEGRADED';
+                }
                 break;
             } catch (err: any) {
                 lastError = err;
                 const msg = err.message || JSON.stringify(err);
-                console.warn(`[ROUTING] Strategy ${strategy.name} failed: ${msg}`);
                 
-                if (strategy.enableSearch && (msg.toLowerCase().includes('limit') || msg.toLowerCase().includes('congested') || msg.toLowerCase().includes('grounding') || msg.toUpperCase().includes('QUOTA_EXCEEDED'))) {
-                    groundingCongestedUntil = Date.now() + (60 * 1000); // 1 min lockout for search specifically
-                    console.warn(`[ROUTING] Grounding specifically congested. Moving to next strategy...`);
+                if (strategy.enableSearch && (msg.toLowerCase().includes('limit') || msg.toLowerCase().includes('congested') || msg.toLowerCase().includes('grounding') || msg.toUpperCase().includes('QUOTA_EXCEEDED') || msg.toUpperCase().includes('SEARCH_QUOTA'))) {
+                    console.warn(`[ROUTING] Grounding specifically congested (${msg}). Moving to next strategy...`);
+                    groundingStatus = (msg.toUpperCase().includes('QUOTA') || msg.toUpperCase().includes('SEARCH_QUOTA')) ? 'QUOTA_EXCEEDED' : 'FAILED';
+                } else {
+                    console.warn(`[ROUTING] Strategy ${strategy.name} failed: ${msg}`);
                 }
                 
                 // Allow loop to proceed to next strategy
@@ -825,12 +840,12 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
         const bayesianAway = new BayesianPoissonAudit(data.awayStats.avgXG);
         const bayesianPoisson = (bayesianHome.getSurety() + bayesianAway.getSurety()) / 2;
         
-        const gradientBoosting = runGradientBoostingAudit(data.homeStats, data.awayStats);
+        const weightedAudit = runWeightedFeatureAudit(data.homeStats, data.awayStats);
         const entropy = (calculateShannonEntropy(data.homeStats) + calculateShannonEntropy(data.awayStats)) / 2;
         const evtRisk = calculateEVTRisk(data.homeStats, data.awayStats);
         
-        // Neural Memory relevance is tied to the Signal Precision in this context
-        const neuralMemory = signalPrecision;
+        // Momentum relevance is tied to the Signal Precision in this context
+        const filterMomentum = signalPrecision;
 
         const analysisResult: AnalysisResult = {
             probability: math.probability,
@@ -854,8 +869,8 @@ export const performAnalysis = async (req: { homeTeam: string; awayTeam: string;
             prosecution: data.prosecution,
             modelAudit: {
                 bayesianPoisson,
-                gradientBoosting,
-                neuralMemory,
+                weightedFeatureSignal: weightedAudit,
+                recursiveFilterMomentum: filterMomentum,
                 entropy,
                 evtRisk
             },

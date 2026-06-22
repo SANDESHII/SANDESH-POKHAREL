@@ -41,26 +41,27 @@ export class KalmanFilter {
 }
 
 /**
- * 3. The Neural Memory Bridge (LSTM-Inspired Long-Short Memory)
- * Replaces pure fractional memory with a dual-gating mechanism.
- * Maintains a "Cell State" for long-term trends and a "Hidden State" for immediate momentum.
+ * 3. Recursive Expectation Filter (Dual-Layer EMA)
+ * A stabilized Exponential Moving Average used to prioritize recent form.
+ * Maintains a primary cell state and a secondary buffer for momentum stability.
  */
-export class NeuralMemoryBridge {
+export class RecursiveExpectationFilter {
     private cellState: number;
-    private hiddenState: number;
-    private forgetGate: number = 0.85;
-    private inputGate: number = 0.15;
+    private bufferState: number;
+    private decayFactor: number = 0.85;
+    private gainFactor: number = 0.15;
 
     constructor(initialValue: number) {
         this.cellState = initialValue;
-        this.hiddenState = initialValue;
+        this.bufferState = initialValue;
     }
 
     update(newValue: number): number {
-        // Simple LSTM-like gating logic
-        this.cellState = (this.cellState * this.forgetGate) + (newValue * this.inputGate);
-        this.hiddenState = (this.hiddenState * 0.5) + (this.cellState * 0.5);
-        return this.hiddenState;
+        // Primary EMA smoothing
+        this.cellState = (this.cellState * this.decayFactor) + (newValue * this.gainFactor);
+        // Secondary stabilized output
+        this.bufferState = (this.bufferState * 0.5) + (this.cellState * 0.5);
+        return this.bufferState;
     }
 }
 
@@ -92,11 +93,11 @@ export class BayesianPoissonAudit {
 }
 
 /**
- * 5. Gradient Boosting Ensemble (LightGBM Inspired)
- * Aggregates weak signals (xG, xT, form, context) into a strong structural audit.
- * Uses a simplified tree-boosting logic to weight features by importance.
+ * 5. Weighted Feature Audit
+ * Aggregates core performance signals into a single structural score.
+ * Replaces complex ensemble models with a reliable weighted heuristic.
  */
-export const runGradientBoostingAudit = (home: TeamStats, away: TeamStats): number => {
+export const runWeightedFeatureAudit = (home: TeamStats, away: TeamStats): number => {
     const features = [
         home.npxG - away.avgXGA, // xG Differential
         home.xT - away.xT,       // Threat Differential
@@ -260,18 +261,20 @@ export const calculateDixonColes = (
     const homeMemory = new NeuralMemoryBridge(home.npxG);
     const awayMemory = new NeuralMemoryBridge(away.avgXGA);
     
-    let alpha = homeKF_estimate(home, homeMemory, homeR);
-    let beta = awayKF_estimate(away, awayMemory, awayR);
-
     // 4. Forensic Convergence Loop (Newton-Raphson with Bounded Backtracking)
     const epsilon = 1e-9;
     const maxIterations = 100;
     let delta = 1.0;
     let iterations = 0;
+    const leagueAvg = 1.35; // League Average goals per team baseline
 
-    // Physical Parameter Bounds [Institutional Floor, Ceiling]
-    const minParam = 0.05;
+    // Physical Parameter Bounds [Institutional Floor, Ceiling] - Relative Units
+    const minParam = 0.01;
     const maxParam = 4.5;
+
+    // 4.1 Initial State Normalization (Dimensional Alignment)
+    let alpha = (homeKF_estimate(home, homeMemory, homeR) || 1.35) / leagueAvg;
+    let beta = (awayKF_estimate(away, awayMemory, awayR) || 1.35) / leagueAvg;
 
     // Likelihood function for backtracking: f(x) = k*ln(x) - x
     const logLikelihood = (k: number, x: number) => k * Math.log(Math.max(1e-10, x)) - x;
@@ -279,31 +282,35 @@ export const calculateDixonColes = (
     while (delta > epsilon && iterations < maxIterations) {
         const prevAlpha = alpha;
         const prevBeta = beta;
-        const currentL = logLikelihood(home.npxG, alpha) + logLikelihood(away.avgXGA, beta);
+        
+        // Target expectations normalized by league baseline
+        const targetHome = home.npxG / leagueAvg;
+        const targetAway = away.avgXGA / leagueAvg;
 
-        // Calculate Gradient/Hessian
-        const gAlpha = (home.npxG / Math.max(minParam, alpha)) - 1;
-        const gBeta = (away.avgXGA / Math.max(minParam, beta)) - 1;
+        const currentL = logLikelihood(targetHome, alpha) + logLikelihood(targetAway, beta);
 
-        const hAlpha = -home.npxG / Math.pow(Math.max(minParam, alpha), 2);
-        const hBeta = -away.avgXGA / Math.pow(Math.max(minParam, beta), 2);
+        // Calculate Gradient/Hessian in normalized space
+        const gAlpha = (targetHome / Math.max(minParam, alpha)) - 1;
+        const gBeta = (targetAway / Math.max(minParam, beta)) - 1;
+
+        const hAlpha = -targetHome / Math.pow(Math.max(minParam, alpha), 2);
+        const hBeta = -targetAway / Math.pow(Math.max(minParam, beta), 2);
 
         // Attempt step with Dynamic Damping (Backtracking)
         let stepSize = 1.0;
         let success = false;
         
         while (stepSize > 0.01 && !success) {
-            let nextAlpha = alpha - (gAlpha / (hAlpha || -1)) * stepSize;
-            let nextBeta = beta - (gBeta / (hBeta || -1)) * stepSize;
+            // Newton step: x = x - (f'/f'')
+            let nextAlpha = alpha - (gAlpha / (hAlpha || -1e-5)) * stepSize;
+            let nextBeta = beta - (gBeta / (hBeta || -1e-5)) * stepSize;
 
-            // Physical Clamping
             nextAlpha = Math.min(maxParam, Math.max(minParam, nextAlpha));
             nextBeta = Math.min(maxParam, Math.max(minParam, nextBeta));
 
-            // Check for improvement in Likelihood (Armijo-style simplified)
-            const nextL = logLikelihood(home.npxG, nextAlpha) + logLikelihood(away.avgXGA, nextBeta);
+            const nextL = logLikelihood(targetHome, nextAlpha) + logLikelihood(targetAway, nextBeta);
             
-            if (nextL >= currentL - 1e-5 || stepSize < 0.1) {
+            if (nextL >= currentL - 1e-4 || stepSize < 0.1) {
                 alpha = nextAlpha;
                 beta = nextBeta;
                 success = true;
@@ -312,36 +319,37 @@ export const calculateDixonColes = (
             }
         }
 
-        // Global Normalization (Structural Coupling)
-        const avgStrength = (alpha + beta) / 2;
-        alpha = alpha / (avgStrength || 1.35);
-        beta = beta / (avgStrength || 1.35);
-
         delta = Math.abs(alpha - prevAlpha) + Math.abs(beta - prevBeta);
         iterations++;
     }
 
     // 4.1 Solver Convergence Check
     if (iterations === maxIterations && delta > 1e-3) {
-        // Log divergence for audit but allow fallback if needed, or throw if strict
         console.warn(`SOLVER DIVERGENCE: Dixon-Coles loop failed to converge. Delta: ${delta}`);
     }
     
-    // 5. MEC (Missing Expected Contribution) Adjustments
-    alpha = Math.max(0.1, Math.min(5.5, alpha - (home.missingExpectedG || 0) + (away.missingExpectedT || 0)));
-    beta = Math.max(0.1, Math.min(5.5, beta - (away.missingExpectedG || 0) + (home.missingExpectedT || 0)));
+    // 5. Convert back to Absolute Goals (Dimensionally Correct Blending)
+    let homeLambda = alpha * leagueAvg;
+    let awayMu = beta * leagueAvg;
+
+    // 5.1 MEC (Missing Expected Contribution) Adjustments in Goal space
+    homeLambda = Math.max(0.1, Math.min(6.5, homeLambda - (home.missingExpectedG || 0) + (away.missingExpectedT || 0)));
+    awayMu = Math.max(0.1, Math.min(6.5, awayMu - (away.missingExpectedG || 0) + (home.missingExpectedT || 0)));
 
     // 6. Calibrated Parameters (Time-Decay Overlay)
     if (home.matchHistory && away.matchHistory) {
         const cal = calibrateMatchParameters(home.matchHistory, away.matchHistory);
-        alpha = (alpha * 0.4) + (cal.homeLambda * 0.6);
-        beta = (beta * 0.4) + (cal.awayMu * 0.6);
+        // Blending two Absolute Goal values (Lambdas) - Dimensionally consistent
+        homeLambda = (homeLambda * 0.3) + (cal.homeLambda * 0.7);
+        awayMu = (awayMu * 0.3) + (cal.awayMu * 0.7);
     }
     
+    // Final return parameters (Lambdas)
+    const alphaResult = homeLambda;
+    const betaResult = awayMu;
+
     // 7. Calibrated Rho (Low-Score Dependence Kernel)
-    // Anchored to Parameter Convergence (alpha/beta) instead of trailing clean sheets (Double-Counting).
-    // Uses a hyperbolic tangent (tanh) to ensure smooth, non-linear asymptotic scaling.
-    const combinedExpectancy = (alpha + beta);
+    const combinedExpectancy = (alphaResult + betaResult);
     const expectationKernel = Math.tanh(1 / (combinedExpectancy + 0.5)); // Correlation peaks as goals vanish
     
     const tacticalFriction = Math.tanh((home.avgXGA + away.avgXGA) / 5); // Defensive resistance saturation
@@ -352,11 +360,11 @@ export const calculateDixonColes = (
     // 6. Execute Credibility Signal Audit (Layer 2)
     const credibilityScore = calculateCredibilitySignal(home, away);
     
-    return { alpha, beta, rho, credibilityScore };
+    return { alpha: alphaResult, beta: betaResult, rho, credibilityScore };
 };
 
 // Helper for initial estimation with recursive state warming
-function homeKF_estimate(home: TeamStats, memory: NeuralMemoryBridge, r: number): number {
+function homeKF_estimate(home: TeamStats, memory: RecursiveExpectationFilter, r: number): number {
     let rawSequence = home.npxGSequence && home.npxGSequence.length > 0 ? home.npxGSequence : [home.npxG];
     
     // Apply Time-Decay Weighting to the sequence before filtering
@@ -376,7 +384,7 @@ function homeKF_estimate(home: TeamStats, memory: NeuralMemoryBridge, r: number)
     return kf.update(finalSignal, r);
 }
 
-function awayKF_estimate(away: TeamStats, memory: NeuralMemoryBridge, r: number): number {
+function awayKF_estimate(away: TeamStats, memory: RecursiveExpectationFilter, r: number): number {
     let rawSequence = away.xGASequence && away.xGASequence.length > 0 ? away.xGASequence : [away.avgXGA];
     
     // Apply Time-Decay Weighting

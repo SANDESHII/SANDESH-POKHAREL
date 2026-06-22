@@ -50,7 +50,7 @@ export const LogPanel: React.FC<LogPanelProps> = ({ analysis }) => {
                     <h5 className="text-[10px] text-emerald-500 font-black uppercase border-l-4 border-emerald-500 pl-3">Audits</h5>
                     <div className="space-y-2">
                         <p className="text-[11px] text-emerald-900 font-bold">BAYES: <span className="text-white">{analysis?.modelAudit?.bayesianPoisson.toFixed(2) || '---'}</span></p>
-                        <p className="text-[11px] text-emerald-900 font-bold">BOOST: <span className="text-white">{analysis?.modelAudit?.gradientBoosting.toFixed(2) || '---'}</span></p>
+                        <p className="text-[11px] text-emerald-900 font-bold">FEAT: <span className="text-white">{analysis?.modelAudit?.weightedFeatureSignal.toFixed(2) || '---'}</span></p>
                         <p className="text-[11px] text-emerald-900 font-bold">ENTROPY: <span className="text-white">{analysis?.modelAudit?.entropy.toFixed(2) || '---'}</span></p>
                         <p className="text-[11px] text-emerald-900 font-bold">EVT_RISK: <span className="text-white">{analysis?.modelAudit?.evtRisk.toFixed(2) || '---'}</span></p>
                     </div>

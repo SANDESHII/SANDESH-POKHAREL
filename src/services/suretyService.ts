@@ -104,8 +104,8 @@ export const calculateMedallionSurety = (
     const floorAgreement = Math.abs(structuralData.floor - (combinedIntensity / 40));
     
     // 5. Base Surety from Monte Carlo Divergence & Survival Rating
-    // We factor in information noise (Entropy) and boosting confidence.
-    const neuralMass = (modelAudit.gradientBoosting * 0.4) + (modelAudit.bayesianPoisson * 0.4) + ((1 - modelAudit.entropy) * 0.2);
+    // We factor in information noise (Entropy) and component confidence.
+    const neuralMass = (modelAudit.weightedFeatureSignal * 0.4) + (modelAudit.bayesianPoisson * 0.4) + ((1 - modelAudit.entropy) * 0.2);
     
     let suretyScore = (simulation.probability * 0.3) + (simulation.survivalRating * 0.3) + (mirrorSimilarity * 0.2) + (neuralMass * 20);
     let localAuditNote = "Standard audit complete.";
@@ -232,12 +232,20 @@ export const calculateMedallionSurety = (
     let corridorSurety = 0;
 
     // Fortress Logic: Prioritize the 1.5 - 3.5 corridor
-    if (simulation.survivalRating > 85 && structuralData.floor > 1.8) {
+    // Strong Over 1.5 Signal: High survival and Structural Floor mass
+    if (simulation.survivalRating > 85 && structuralData.floor > 1.85) {
         corridorAnchor = 'OVER 1.5';
         corridorSurety = (simulation.survivalRating * 0.6) + (mirrorSimilarity * 0.4);
-    } else if (contextualVolatility > 0.4 && physics.saturation > 0.4) {
+    } 
+    // Strong Under 3.5 Signal: Extreme Market Saturation and Low Signal Precision (Conservative Ceiling)
+    else if (physics.saturation > 0.65 && evtRisk < 40 && structuralData.floor < 2.5) {
         corridorAnchor = 'UNDER 3.5';
-        corridorSurety = (100 - evtRisk) * 0.5 + (physics.saturation * 50);
+        corridorSurety = (100 - evtRisk) * 0.4 + (physics.saturation * 60);
+    }
+    // High Volatility fallback to Neutral
+    else if (contextualVolatility > 0.7) {
+        corridorAnchor = 'NEUTRAL';
+        corridorSurety = 0;
     }
 
     // 8. Assign Forensic Verdict (TRIPLE-LOCK INTEGRATION)
@@ -261,7 +269,7 @@ export const calculateMedallionSurety = (
         { met: physics.metAudit && physics.saturation < adpSaturationThreshold, label: `Physics: Spatial Capacity Guard` },
         { met: market.syndicateFlow === 'HIGH', label: "Hard Gate: Professional Syndicate Alignment" },
         { met: neuralCoherence >= 0.75, label: "Neural Coherence: Module Alignment" },
-        { met: modelAudit.gradientBoosting > 0.6, label: "Structural Boosting Confidence" }
+        { met: modelAudit.weightedFeatureSignal > 0.6, label: "Weighted Feature Confidence" }
     ];
 
     const isNuclearFortress = fortressChecks.every(c => c.met) && neuralCoherence === 1.0;
@@ -276,13 +284,13 @@ export const calculateMedallionSurety = (
     } else if (isNuclearFortress) {
         verdict = 'GOLD';
         auditNote = "NUCLEAR FORTRESS: Absolute convergence detected in the 1.5-3.5 corridor.";
-    } else if (suretyScore > 96 && hasNuclearFloor && isProsecutorHappy && isStressTestStrong && hasSyndicateGate && physics.metAudit && neuralCoherence >= 0.75) {
+    } else if (suretyScore > 92 && isStressTestStrong && (hasSyndicateGate || signalPrecision > 0.8) && physics.metAudit && neuralCoherence >= 0.75) {
         verdict = 'GOLD';
-        auditNote = "MEDALLION SURETY: Elite alignment with hard neural and syndicate gates fulfilled.";
-    } else if (suretyScore > 85 && physics.metAudit && neuralCoherence >= 0.5) {
+        auditNote = "MEDALLION SURETY: Elite performance with stabilized signal precision and module alignment.";
+    } else if (suretyScore > 82 && physics.metAudit && neuralCoherence >= 0.5) {
         verdict = 'SILVER';
         auditNote = "Strong structural alignment with tightened neural controls.";
-    } else if (suretyScore < 50 || evtRisk > 80 || neuralCoherence < 0.25) {
+    } else if (suretyScore < 45 || evtRisk > 85 || neuralCoherence < 0.2) {
         verdict = 'VOID';
         auditNote = "Structural rupture, extreme tail risk, or neural divergence detected.";
     }

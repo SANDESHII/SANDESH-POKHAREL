@@ -109,7 +109,7 @@ export interface AnalysisResult {
     modelMode: 'NUCLEAR_FORTRESS' | 'POISSON_FALLBACK';
     matchContextFlag?: 'Dead-Rubber' | 'Derby' | 'Standard';
     calibration?: CalibrationMatrix;
-    groundingStatus?: 'OPTIMAL' | 'DEGRADED' | 'FAILED';
+    groundingStatus?: 'OPTIMAL' | 'DEGRADED' | 'FAILED' | 'QUOTA_EXCEEDED' | 'SEARCH_COOLDOWN';
     ingestedDataSummary?: string;
 }
 
@@ -123,8 +123,8 @@ export interface CalibrationMatrix {
 
 export interface ModelAudit {
     bayesianPoisson: number;
-    gradientBoosting: number;
-    neuralMemory: number;
+    weightedFeatureSignal: number;
+    recursiveFilterMomentum: number;
     entropy: number;
     evtRisk: number;
 }
