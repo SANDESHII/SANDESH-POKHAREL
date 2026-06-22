@@ -240,7 +240,14 @@ export const calculateMedallionSurety = (
     // Strong Under 3.5 Signal: Extreme Market Saturation and Low Signal Precision (Conservative Ceiling)
     else if (physics.saturation > 0.65 && evtRisk < 40 && structuralData.floor < 2.5) {
         corridorAnchor = 'UNDER 3.5';
-        corridorSurety = (100 - evtRisk) * 0.4 + (physics.saturation * 60);
+        
+        // Strict Mathematical Rejection: If Entropy > 0.75, signal is pure noise.
+        if (modelAudit.entropy > 0.75) {
+            corridorSurety = 0;
+            localAuditNote = "REJECTED (UNPREDICTABLE CHAOS): Entropy > 0.75. Volatility exceeds Under 3.5 boundary stability.";
+        } else {
+            corridorSurety = (100 - evtRisk) * 0.4 + (physics.saturation * 60);
+        }
     }
     // High Volatility fallback to Neutral
     else if (contextualVolatility > 0.7) {
@@ -255,7 +262,7 @@ export const calculateMedallionSurety = (
     const hasNuclearFloor = floorValue > 1.8; // Must be at least Over 1.5 Bolted
     const isProsecutorHappy = prosecutionRisk < 45; // Low risk from Inversion Audit
     const isStressTestStrong = simulation.survivalRating > 88; // High survival in disaster simulations
-    const isEntropyHigh = modelAudit.entropy > 0.7; // Too much noise
+    const isEntropyHigh = modelAudit.entropy > 0.75; // Unpredictable Chaos threshold
 
     // 8b. Statistical Fortress Protocol (Convergence Check)
     // We check for high-confidence alignment while applying the Adaptive Thresholds
@@ -278,9 +285,11 @@ export const calculateMedallionSurety = (
     // Hard Gate: No GOLD/Fortress without Syndicate Alignment, Neural Coherence, or Elite Precision
     const hasSyndicateGate = market.syndicateFlow === 'HIGH';
 
-    if (signalPrecision < 0.45 || neuralCoherence < 0.5) {
+    if (signalPrecision < 0.45 || neuralCoherence < 0.5 || isEntropyHigh) {
         verdict = 'VOID';
-        auditNote = "REJECTED: Signal precision or Neural Coherence too low. Systemic data rupture.";
+        auditNote = isEntropyHigh 
+            ? "REJECTED: Unpredictable Chaos (Entropy > 0.75). Data is pure noise, no safe transaction possible." 
+            : "REJECTED: Signal precision or Neural Coherence too low. Systemic data rupture.";
     } else if (isNuclearFortress) {
         verdict = 'GOLD';
         auditNote = "NUCLEAR FORTRESS: Absolute convergence detected in the 1.5-3.5 corridor.";

@@ -1,15 +1,13 @@
 import { TeamStats, RegimeState, MatchHistoryItem } from '../types';
 
 /**
- * 1. Time-Decay Weighting Function
- * Applies e^(-lambda * t) to historical sequences to prioritize recent form.
+ * 1. Time-Decay Weighting
+ * Generates weights e^(-lambda * t) to prioritize recent form in statistical sums.
  */
-export const applyTimeDecay = (sequence: number[], lambda: number = 0.15): number[] => {
-    const len = sequence.length;
-    return sequence.map((val, i) => {
+export const getTimeDecayWeights = (len: number, lambda: number = 0.15): number[] => {
+    return Array.from({ length: len }, (_, i) => {
         const t = len - 1 - i; // t=0 is most recent
-        const weight = Math.exp(-lambda * t);
-        return val * weight;
+        return Math.exp(-lambda * t);
     });
 };
 
@@ -257,24 +255,34 @@ export const calculateDixonColes = (
     const homeR = Math.max(0.05, (((1 - hStab) * 0.2) + (hVol * 0.1) + maxVariance) * marketEffect);
     const awayR = Math.max(0.05, (((1 - aStab) * 0.2) + (aVol * 0.1) + maxVariance) * marketEffect);
 
-    // 4. Initial State Estimation (Kalman + Neural Memory with Time-Decay)
-    const homeMemory = new NeuralMemoryBridge(home.npxG);
-    const awayMemory = new NeuralMemoryBridge(away.avgXGA);
+    // 4. Initial State Estimation (Kalman + Recursive Expectation Filter with Time-Decay)
+    const homeMemory = new RecursiveExpectationFilter(home.npxG);
+    const awayMemory = new RecursiveExpectationFilter(away.npxG);
     
     // 4. Forensic Convergence Loop (Newton-Raphson with Bounded Backtracking)
     const epsilon = 1e-9;
     const maxIterations = 100;
     let delta = 1.0;
     let iterations = 0;
-    const leagueAvg = 1.35; // League Average goals per team baseline
 
     // Physical Parameter Bounds [Institutional Floor, Ceiling] - Relative Units
     const minParam = 0.01;
     const maxParam = 4.5;
 
-    // 4.1 Initial State Normalization (Dimensional Alignment)
+    // 4. Initial State Normalization (Dimensional Alignment)
+    const leagueAvg = 1.35; // League Average goals per team baseline
     let alpha = (homeKF_estimate(home, homeMemory, homeR) || 1.35) / leagueAvg;
     let beta = (awayKF_estimate(away, awayMemory, awayR) || 1.35) / leagueAvg;
+
+    // 4.1.1 Calibration Injection (Solve Scale Mismatch)
+    if (home.matchHistory && away.matchHistory) {
+        const cal = calibrateMatchParameters(home.matchHistory, away.matchHistory, leagueAvg * 2);
+        const calAlpha = cal.homeLambda / leagueAvg;
+        const calBeta = cal.awayMu / leagueAvg;
+        
+        alpha = (alpha * 0.3) + (calAlpha * 0.7);
+        beta = (beta * 0.3) + (calBeta * 0.7);
+    }
 
     // Likelihood function for backtracking: f(x) = k*ln(x) - x
     const logLikelihood = (k: number, x: number) => k * Math.log(Math.max(1e-10, x)) - x;
@@ -283,32 +291,54 @@ export const calculateDixonColes = (
         const prevAlpha = alpha;
         const prevBeta = beta;
         
-        // Target expectations normalized by league baseline
-        const targetHome = home.npxG / leagueAvg;
-        const targetAway = away.avgXGA / leagueAvg;
+        // Target expectations: We use the historical sequence to maximize weighted likelihood
+        const hSeq = home.npxGSequence && home.npxGSequence.length > 0 ? home.npxGSequence : [home.npxG];
+        const aSeq = away.npxGSequence && away.npxGSequence.length > 0 ? away.npxGSequence : [away.npxG];
+        
+        const hWeights = getTimeDecayWeights(hSeq.length);
+        const aWeights = getTimeDecayWeights(aSeq.length);
 
-        const currentL = logLikelihood(targetHome, alpha) + logLikelihood(targetAway, beta);
+        // Calculate Gradient/Hessian across the sequence (Normalized space)
+        let gAlpha = 0;
+        let hAlpha = 0;
+        for (let i = 0; i < hSeq.length; i++) {
+            const target = hSeq[i] / leagueAvg;
+            const w = hWeights[i];
+            gAlpha += w * ((target / Math.max(minParam, alpha)) - 1);
+            hAlpha += w * (-target / Math.pow(Math.max(minParam, alpha), 2));
+        }
 
-        // Calculate Gradient/Hessian in normalized space
-        const gAlpha = (targetHome / Math.max(minParam, alpha)) - 1;
-        const gBeta = (targetAway / Math.max(minParam, beta)) - 1;
-
-        const hAlpha = -targetHome / Math.pow(Math.max(minParam, alpha), 2);
-        const hBeta = -targetAway / Math.pow(Math.max(minParam, beta), 2);
+        let gBeta = 0;
+        let hBeta = 0;
+        for (let i = 0; i < aSeq.length; i++) {
+            const target = aSeq[i] / leagueAvg;
+            const w = aWeights[i];
+            gBeta += w * ((target / Math.max(minParam, beta)) - 1);
+            hBeta += w * (-target / Math.pow(Math.max(minParam, beta), 2));
+        }
 
         // Attempt step with Dynamic Damping (Backtracking)
         let stepSize = 1.0;
         let success = false;
         
+        // Likelihood function sum for backtracking
+        const calcTotalL = (a: number, b: number) => {
+            let sum = 0;
+            for (let i = 0; i < hSeq.length; i++) sum += hWeights[i] * logLikelihood(hSeq[i]/leagueAvg, a);
+            for (let i = 0; i < aSeq.length; i++) sum += aWeights[i] * logLikelihood(aSeq[i]/leagueAvg, b);
+            return sum;
+        };
+        const currentL = calcTotalL(alpha, beta);
+
         while (stepSize > 0.01 && !success) {
-            // Newton step: x = x - (f'/f'')
-            let nextAlpha = alpha - (gAlpha / (hAlpha || -1e-5)) * stepSize;
-            let nextBeta = beta - (gBeta / (hBeta || -1e-5)) * stepSize;
+            // Newton step: x = x + (f'/f'') - Fixed per User Request (Handle Negative Hessian properly)
+            let nextAlpha = alpha + (gAlpha / (hAlpha || -1e-5)) * stepSize;
+            let nextBeta = beta + (gBeta / (hBeta || -1e-5)) * stepSize;
 
             nextAlpha = Math.min(maxParam, Math.max(minParam, nextAlpha));
             nextBeta = Math.min(maxParam, Math.max(minParam, nextBeta));
 
-            const nextL = logLikelihood(targetHome, nextAlpha) + logLikelihood(targetAway, nextBeta);
+            const nextL = calcTotalL(nextAlpha, nextBeta);
             
             if (nextL >= currentL - 1e-4 || stepSize < 0.1) {
                 alpha = nextAlpha;
@@ -332,18 +362,10 @@ export const calculateDixonColes = (
     let homeLambda = alpha * leagueAvg;
     let awayMu = beta * leagueAvg;
 
-    // 5.1 MEC (Missing Expected Contribution) Adjustments in Goal space
+    // 5. Final MEC Adjustments (Missing Expected Contribution)
     homeLambda = Math.max(0.1, Math.min(6.5, homeLambda - (home.missingExpectedG || 0) + (away.missingExpectedT || 0)));
     awayMu = Math.max(0.1, Math.min(6.5, awayMu - (away.missingExpectedG || 0) + (home.missingExpectedT || 0)));
 
-    // 6. Calibrated Parameters (Time-Decay Overlay)
-    if (home.matchHistory && away.matchHistory) {
-        const cal = calibrateMatchParameters(home.matchHistory, away.matchHistory);
-        // Blending two Absolute Goal values (Lambdas) - Dimensionally consistent
-        homeLambda = (homeLambda * 0.3) + (cal.homeLambda * 0.7);
-        awayMu = (awayMu * 0.3) + (cal.awayMu * 0.7);
-    }
-    
     // Final return parameters (Lambdas)
     const alphaResult = homeLambda;
     const betaResult = awayMu;
@@ -367,15 +389,12 @@ export const calculateDixonColes = (
 function homeKF_estimate(home: TeamStats, memory: RecursiveExpectationFilter, r: number): number {
     let rawSequence = home.npxGSequence && home.npxGSequence.length > 0 ? home.npxGSequence : [home.npxG];
     
-    // Apply Time-Decay Weighting to the sequence before filtering
-    const sequence = applyTimeDecay(rawSequence);
-    
     // 1. Initialize with earliest data point
-    const kf = new KalmanFilter(sequence[0]);
+    const kf = new KalmanFilter(rawSequence[0]);
     
     // 2. Warm up through the historical sequence
-    for (let i = 1; i < sequence.length; i++) {
-        const memSignal = memory.update(sequence[i]);
+    for (let i = 1; i < rawSequence.length; i++) {
+        const memSignal = memory.update(rawSequence[i]);
         kf.update(memSignal, r * 1.5); // Use slightly higher noise during historical warmup
     }
     
@@ -385,19 +404,16 @@ function homeKF_estimate(home: TeamStats, memory: RecursiveExpectationFilter, r:
 }
 
 function awayKF_estimate(away: TeamStats, memory: RecursiveExpectationFilter, r: number): number {
-    let rawSequence = away.xGASequence && away.xGASequence.length > 0 ? away.xGASequence : [away.avgXGA];
+    let rawSequence = away.npxGSequence && away.npxGSequence.length > 0 ? away.npxGSequence : [away.npxG];
     
-    // Apply Time-Decay Weighting
-    const sequence = applyTimeDecay(rawSequence);
+    const kf = new KalmanFilter(rawSequence[0]);
     
-    const kf = new KalmanFilter(sequence[0]);
-    
-    for (let i = 1; i < sequence.length; i++) {
-        const memSignal = memory.update(sequence[i]);
+    for (let i = 1; i < rawSequence.length; i++) {
+        const memSignal = memory.update(rawSequence[i]);
         kf.update(memSignal, r * 1.5);
     }
     
-    const finalSignal = memory.update(away.avgXGA);
+    const finalSignal = memory.update(away.npxG);
     return kf.update(finalSignal, r);
 }
 /**
@@ -598,8 +614,7 @@ export const calculatePhysicalCeiling = (home: TeamStats, away: TeamStats, regim
 };
 
 export const calculateProbability = (home: TeamStats, away: TeamStats, alpha: number, beta: number, rho: number, regimes: RegimeState[]) => {
-    // 1. Dixon-Coles Adjustment Logic
-    // We calculate the joint probability of low scores and apply the tau adjustment kernel.
+    // 1. Dixon-Coles Matrix Construction
     const poisson = (k: number, lambda: number) => (Math.pow(lambda, k) * Math.exp(-lambda)) / factorial(k);
     const factorial = (n: number): number => n <= 1 ? 1 : n * factorial(n - 1);
 
@@ -612,24 +627,34 @@ export const calculateProbability = (home: TeamStats, away: TeamStats, alpha: nu
         return 1;
     };
 
-    let pHome = 0;
-    let pDraw = 0;
-    let pAway = 0;
+    let probHome = 0;
+    let probDraw = 0;
+    let probAway = 0;
+    let totalProb = 0;
 
-    // Sum probabilities up to 8 goals per team for high precision
+    // Sum probabilities across the goal matrix
     for (let h = 0; h <= 8; h++) {
         for (let a = 0; a <= 8; a++) {
             const baseProb = poisson(h, alpha) * poisson(a, beta);
             const adjProb = baseProb * getTau(h, a, alpha, beta, rho);
-
-            if (h > a) pHome += adjProb;
-            else if (h === a) pDraw += adjProb;
-            else pAway += adjProb;
+            
+            if (h > a) probHome += adjProb;
+            else if (h === a) probDraw += adjProb;
+            else probAway += adjProb;
+            
+            totalProb += adjProb;
         }
     }
 
-    // Normalized adjusted probability for the stronger team (Home focus here for consistent scaling)
-    const rawBaseProb = pHome / (pHome + pAway + 0.0001);
+    // Normalized Outcome Probabilities (1X2)
+    const pH = probHome / totalProb;
+    const pD = probDraw / totalProb;
+    const pA = probAway / totalProb;
+
+    // Pick predicted outcome probability (Primary Signal)
+    let rawBaseProb = pH;
+    if (pA > pH) rawBaseProb = pA;
+    if (pD > pH && pD > pA) rawBaseProb = pD;
     
     // 2. Tactical Drift Integration (Regime Coupling)
     // We adjust the base probability based on the projected match narrative.
