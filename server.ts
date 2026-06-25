@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { performAnalysis, getQueueState } from "./geminiService";
+import { performAnalysis } from "./geminiService";
 
 async function startServer() {
   const app = express();
@@ -10,10 +10,6 @@ async function startServer() {
   app.use(express.json());
 
   // API routes
-  app.get("/api/status", (req, res) => {
-    res.json(getQueueState());
-  });
-
   app.post("/api/analyze", async (req, res) => {
     try {
       const result = await performAnalysis(req.body);
@@ -33,7 +29,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    app.get('*all', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

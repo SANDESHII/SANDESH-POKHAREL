@@ -1,9 +1,8 @@
 {
-  "name": "Match Fortress Pro",
-  "description": "Institutional-grade forensic football analysis terminal for Over 1.5 / Under 3.5 precision, featuring AI-powered search grounding and calibrated Monte Carlo simulations.",
+  "name": "Match Report Analysis",
+  "description": "Professional football analysis tool for match predictions and statistical insights using AI-powered search and simulations.",
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ],
-  "requestFramePermissions": [],
-  "prompt": ""
+  "requestFramePermissions": []
 }

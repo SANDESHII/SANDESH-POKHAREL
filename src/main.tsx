@@ -2,46 +2,84 @@
 import './index.css';
 import React, { useState, useEffect, useMemo } from 'react';
 
-// Suppress benign WebSocket HMR noise in the shared/preview environment
-if (typeof window !== 'undefined') {
-    const originalError = console.error;
-    const originalWarn = console.warn;
-    
-    console.error = (...args) => {
-        const msg = String(args[0] || '');
-        if (msg.includes('WebSocket') || msg.includes('vite') || msg.includes('hmr')) return;
-        originalError.apply(console, args);
-    };
-
-    console.warn = (...args) => {
-        const msg = String(args[0] || '');
-        if (msg.includes('WebSocket') || msg.includes('vite') || msg.includes('hmr')) return;
-        originalWarn.apply(console, args);
-    };
-
-    window.addEventListener('unhandledrejection', (event) => {
-        const reason = event.reason?.message || String(event.reason || '');
-        if (reason.includes('WebSocket') || reason.includes('vite')) {
-            event.preventDefault();
-        }
-    });
-}
 import { createRoot } from 'react-dom/client';
 import { motion } from 'motion/react';
 import { 
-    Info,
-    Activity
+    Activity,
+    Info
 } from 'lucide-react';
 import { AnalysisResult } from './types';
-import { runMonteCarloSimulation } from './services/monteCarloService';
-import { calculateMedallionSurety } from './services/suretyService';
+import { runMatchSimulation, calculateConfidenceAudit } from './services/engine';
 
 // Components
-import { Header } from './components/Header';
-import { AnalysisForm } from './components/AnalysisForm';
+const Header: React.FC = () => (
+    <header className="fixed top-0 left-0 right-0 z-50 bg-black/60 backdrop-blur-md border-b border-emerald-900/20 px-6 py-4">
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
+            <div className="flex items-center gap-3">
+                <Activity className="w-5 h-5 text-emerald-500" />
+                <h1 className="text-sm font-black tracking-[0.2em] text-white">MATCH <span className="text-emerald-500">REPORT</span></h1>
+            </div>
+        </div>
+    </header>
+);
+
+const LoadingOverlay: React.FC<{ loading: boolean, stage: number, messages: string[] }> = ({ loading, stage, messages }) => (
+    loading ? (
+        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex flex-col items-center justify-center space-y-8 animate-in fade-in duration-500">
+            <div className="relative">
+                <div className="w-32 h-32 border-2 border-emerald-900 rounded-full animate-[spin_3s_linear_infinite]" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-16 h-16 border-b-2 border-emerald-500 rounded-full animate-spin" />
+                </div>
+            </div>
+            <div className="text-center space-y-3">
+                <p className="text-[10px] font-black tracking-[0.4em] text-emerald-500 uppercase animate-pulse">
+                    {messages[stage]}
+                </p>
+                <div className="flex gap-1 justify-center">
+                    {[...Array(6)].map((_, i) => (
+                        <div key={i} className={`w-1 h-1 rounded-full ${i === stage ? 'bg-emerald-500 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-emerald-950'}`} />
+                    ))}
+                </div>
+            </div>
+        </div>
+    ) : null
+);
+
+const AnalysisForm: React.FC<any> = ({ 
+    home, setHome, away, setAway, league, setLeague, time, setTime, 
+    onAnalyze, loading, isSearchEnabled, setIsSearchEnabled
+}) => (
+    <form onSubmit={(e) => { e.preventDefault(); if (!loading && home && away) onAnalyze(); }} className="bg-zinc-950 p-12 rounded-2xl border border-emerald-900/30 shadow-2xl backdrop-blur-sm max-w-5xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-10">
+            {[
+                { label: 'Home Team', val: home, set: setHome, placeholder: 'CITY' },
+                { label: 'Away Team', val: away, set: setAway, placeholder: 'LIVERPOOL' },
+                { label: 'League', val: league, set: setLeague, placeholder: 'PREMIER' },
+                { label: 'Kickoff Time', val: time, set: setTime, placeholder: '19:45' }
+            ].map((f, i) => (
+                <div key={i} className="space-y-4">
+                    <label className="text-[10px] uppercase tracking-[0.3em] text-emerald-900 font-black">{f.label}</label>
+                    <input type="text" value={f.val} onChange={(e) => f.set(e.target.value.toUpperCase())} className="w-full bg-transparent border-b-2 border-emerald-950 px-0 py-4 text-3xl text-emerald-500 focus:outline-none focus:border-emerald-500 transition-all font-black placeholder:text-emerald-950 uppercase tracking-tighter" placeholder={f.placeholder} />
+                </div>
+            ))}
+        </div>
+        <div className="mt-12 flex items-center justify-between p-4 bg-emerald-950/10 border border-emerald-900/20 rounded-xl">
+            <div className="space-y-1">
+                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500">Live Grounding</span>
+                <p className="text-[9px] text-emerald-900 font-bold uppercase">Real-time data fetch enabled</p>
+            </div>
+            <button type="button" onClick={() => setIsSearchEnabled(!isSearchEnabled)} className={`relative w-12 h-6 rounded-full transition-all duration-300 ${isSearchEnabled ? 'bg-emerald-600' : 'bg-zinc-800'}`}>
+                <div className={`absolute top-1 left-1 w-4 h-4 bg-black rounded-full transition-all duration-300 ${isSearchEnabled ? 'translate-x-6' : 'translate-x-0'}`} />
+            </button>
+        </div>
+        <button type="submit" disabled={loading || !home || !away} className={`w-full mt-16 py-8 rounded-xl font-black tracking-[0.5em] text-sm transition-all ${loading || !home || !away ? 'bg-emerald-950/20 text-emerald-900' : 'bg-emerald-600 text-black hover:bg-emerald-500'}`}>
+            {loading ? 'RUNNING ANALYSIS...' : 'COMMENCE ANALYSIS'}
+        </button>
+    </form>
+);
+
 import { ResultGrid } from './components/ResultDisplay';
-import { LogPanel } from './components/LogPanel';
-import { LoadingOverlay } from './components/LoadingOverlay';
 
 const App: React.FC = () => {
     const [homeInput, setHomeInput] = useState('');
@@ -50,37 +88,19 @@ const App: React.FC = () => {
     const [timeInput, setTimeInput] = useState('');
     const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
     const [simulation, setSimulation] = useState<any>(null);
-    const [userConfidence, setUserConfidence] = useState<number>(0.85);
-    const [status, setStatus] = useState({ depth: 0, isCoolingDown: false, cooldownRemaining: 0, message: '' });
+    const [isSearchEnabled, setIsSearchEnabled] = useState<boolean>(true);
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
     const [loadingStage, setLoadingStage] = useState(0);
     const [error, setError] = useState<string | null>(null);
 
     const loadingMessages = [
-        "ESTABLISHING GROUNDING LINK...",
-        "INDEXING NPXG METRICS...",
-        "AUDITING SQUAD STABILITY...",
-        "DETERMINING COMPUTE HEURISTICS...",
-        "EXECUTING ADAPTIVE MONTE CARLO LOOPS...",
-        "VERIFYING DIXON-COLES INTEGRITY..."
+        "Analyzing data...",
+        "Running simulations...",
+        "Calculating probabilities...",
+        "Building tactical paths...",
+        "Optimizing parameters...",
+        "Finalizing report..."
     ];
-
-    // Status Polling
-    useEffect(() => {
-        const pollStatus = async () => {
-            try {
-                const res = await fetch('/api/status');
-                if (res.ok) {
-                    const data = await res.json();
-                    setStatus(prev => ({ ...prev, ...data }));
-                }
-            } catch (err) {}
-        };
-
-        const interval = setInterval(pollStatus, 3000);
-        pollStatus();
-        return () => clearInterval(interval);
-    }, []);
 
     // Loading Stage Advance
     useEffect(() => {
@@ -103,49 +123,38 @@ const App: React.FC = () => {
         }
 
         const runAsyncSimulation = async () => {
-            const floor = analysis.structuralFloor || 1.2;
-            const ceiling = analysis.physicalCeiling || 6.0;
+            const minExp = analysis.minimumExpectancy || 1.2;
+            const maxPot = analysis.potentialCeiling || 6.0;
 
             // Yield thread before running heavy computation
             setTimeout(async () => {
-                const result = await runMonteCarloSimulation(
+                const result = await runMatchSimulation(
                     analysis.probability, 
-                    analysis.regimePath, 
-                    floor,
-                    ceiling,
+                    analysis.tacticalPath, 
+                    minExp,
+                    maxPot,
                     analysis.homeStats.name,
                     analysis.awayStats.name,
                     analysis.homeXG || 1.35,
                     analysis.awayXG || 1.35,
-                    userConfidence,
-                    analysis.rho,
+                    0.85, // accuracyWeight default
+                    analysis.dependence,
                     analysis.homeStats.offensiveVolatility || 0.5,
                     analysis.awayStats.offensiveVolatility || 0.5,
                     analysis.homeStats.defensiveStability || 0.5,
                     analysis.awayStats.defensiveStability || 0.5,
-                    analysis.context
+                    analysis.topTacticalPaths || []
                 );
                 setSimulation(result);
             }, 50);
         };
 
         runAsyncSimulation();
-    }, [analysis, userConfidence]);
+    }, [analysis]);
 
     const surety = useMemo(() => {
         if (!analysis || !simulation) return null;
-        return calculateMedallionSurety(
-            simulation, 
-            analysis.regimePath, 
-            analysis.structuralData, 
-            analysis.signalPrecision,
-            analysis.physics,
-            analysis.marketReality,
-            analysis.context,
-            analysis.mirrorMatches,
-            analysis.prosecution,
-            analysis.modelAudit
-        );
+        return calculateConfidenceAudit(simulation, analysis.modelAudit);
     }, [analysis, simulation]);
 
     const handleAnalyze = async () => {
@@ -165,7 +174,8 @@ const App: React.FC = () => {
                     homeTeam: homeInput.toUpperCase(),
                     awayTeam: awayInput.toUpperCase(),
                     league: (leagueInput || 'INSTITUTIONAL_ROUTING').toUpperCase(),
-                    kickoff: (timeInput || 'UPCOMING').toUpperCase()
+                    kickoff: (timeInput || 'UPCOMING').toUpperCase(),
+                    isSearchEnabled: isSearchEnabled
                 })
             });
 
@@ -176,9 +186,6 @@ const App: React.FC = () => {
 
             const result: AnalysisResult = await response.json();
             setAnalysis(result);
-            if (result.context?.confidenceVector) {
-                setUserConfidence(result.context.confidenceVector);
-            }
         } catch (err: any) {
             setError(err.message || 'ANALYSIS FAILED. SIGNAL LOST.');
         } finally {
@@ -187,8 +194,8 @@ const App: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen bg-black text-emerald-500 selection:bg-emerald-500/20 font-sans">
-            <Header status={status} />
+        <div className="min-h-screen bg-black text-emerald-500 selection:bg-emerald-500/20 font-mono">
+            <Header />
             <LoadingOverlay loading={loadingAnalysis} stage={loadingStage} messages={loadingMessages} />
 
             <main className="max-w-7xl mx-auto px-6 pt-32 pb-24 space-y-16">
@@ -200,13 +207,13 @@ const App: React.FC = () => {
                         className="max-w-5xl mx-auto text-center space-y-6"
                     >
                         <div className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-950/20 border border-emerald-900/30 rounded-full text-[10px] font-black text-emerald-500 tracking-[0.3em] uppercase">
-                            <Activity className="w-3 h-3" /> Professional Grade
+                            <Activity className="w-3 h-3" /> Tactical Analytics
                         </div>
                         <h2 className="text-6xl font-black tracking-tighter text-white uppercase">
-                            INSTITUTIONAL <span className="text-emerald-500">ANALYSIS</span>
+                            MATCH <span className="text-emerald-500">ANALYSIS</span>
                         </h2>
                         <p className="text-emerald-900 font-black text-[10px] tracking-[0.4em] uppercase">
-                            Empirical Data // Structural Integrity // Market Reality
+                            Verified Data // Tactical Patterns // Market Sentiment
                         </p>
                     </motion.div>
                 )}
@@ -217,6 +224,7 @@ const App: React.FC = () => {
                     away={awayInput} setAway={setAwayInput}
                     league={leagueInput} setLeague={setLeagueInput}
                     time={timeInput} setTime={setTimeInput}
+                    isSearchEnabled={isSearchEnabled} setIsSearchEnabled={setIsSearchEnabled}
                     onAnalyze={handleAnalyze}
                     loading={loadingAnalysis}
                 />
@@ -245,19 +253,13 @@ const App: React.FC = () => {
                             surety={surety} 
                             isOptimized={simulation?.computeOptimized} 
                         />
-                        <LogPanel analysis={analysis} />
                     </motion.div>
                 )}
             </main>
 
             <footer className="max-w-7xl mx-auto px-6 py-16 border-t border-emerald-900/20 flex flex-col md:flex-row items-center justify-between gap-8 text-emerald-950">
-                <div className="flex items-center gap-6">
-                    <span className="text-[10px] font-black uppercase tracking-[0.3em]">ID: <span className="text-emerald-900 font-mono">MF-PRO-001</span></span>
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-950" />
-                    <span className="text-[10px] font-black uppercase tracking-[0.3em]">SECURITY: <span className="text-emerald-900">LEVEL 4</span></span>
-                </div>
                 <div className="text-[10px] font-black uppercase tracking-widest opacity-60">
-                    &copy; 2024 FORTRESS PRO. AUDITED UNDER NUCLEAR CONSENSUS PROTOCOL.
+                    &copy; 2024 MATCH REPORT ANALYSIS. DATA VERIFIED VIA PROPRIETARY ANALYSIS.
                 </div>
             </footer>
         </div>

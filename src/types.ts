@@ -16,26 +16,18 @@ export interface TeamStats {
     avgXGA: number;
     npxG: number; 
     xT: number;   
-    defensiveStability?: number;
-    offensiveVolatility?: number;
+    defensiveStability: number;
+    offensiveVolatility: number;
     form: number[];
     cleanSheets: number;
-    // New metrics for variance and context
-    npxG_Understat?: number;
-    npxG_SofaScore?: number;
-    redCardAnomalyMinutes?: number;
-    managerSacked?: boolean;
-    injuryCount?: number;
-    missingExpectedG?: number;
-    missingExpectedT?: number;
-    missingPlayersList?: string[];
     npxGSequence?: number[];
     xGASequence?: number[];
     matchHistory?: MatchHistoryItem[];
+    calibrationStability?: number;
 }
 
-export interface RegimeState {
-    regime: 'LOW_INTENSITY' | 'FLUID_TRANSITION' | 'HIGH_SATURATION' | 'CHAOTIC_DECAY';
+export interface TacticalPhase {
+    state: 'CONSERVATIVE' | 'TRANSITIONAL' | 'DOMINANT' | 'HIGH_VARIANCE';
     confidence: number;
     intensity: number;
 }
@@ -46,40 +38,72 @@ export interface MatchContext {
     stadium: string;
     historicalRivalry: number;
     stakes: string;
-    confidenceVector: number; // 0 to 1: High value = stable environment, Low value = chaotic/high variance
 }
 
-export interface MarketReality {
-    syndicateFlow: "HIGH" | "MEDIUM" | "LOW";
-    smartMoneyTarget: string;
+export interface MarketIndicators {
+    volume: "HIGH" | "MEDIUM" | "LOW";
     marketDivergence: number;
     sentimentScore: number;
-    openingOdds: { home: number, draw: number, away: number };
-    currentOdds: { home: number, draw: number, away: number };
-    marketMovementSignal: number; // -1 to 1: Positive means market agrees with model bias
+    marketMovementSignal: number;
 }
 
-export interface MirrorMatch {
-    match: string;
-    result: string;
-    similarityScore: number;
-}
-
-export interface ProsecutionCase {
+export interface DataConsistencyReport {
     contradictions: string[];
     riskScore: number;
 }
 
-export interface ViterbiPath {
-    states: RegimeState[];
-    logProbability: number;
+export interface TacticalSequence {
+    phases: TacticalPhase[];
+    likelihood: number;
 }
 
-export interface BatchItem {
-    homeTeam: string;
-    awayTeam: string;
-    league: string;
-    kickoff: string;
+export interface AdjustmentMatrix {
+    adjustmentA: number;
+    adjustmentB: number;
+    reliabilityScore: number;
+}
+
+export interface ModelAudit {
+    signalPurity: number;
+    analysisStability: number;
+    noiseRatio: number;
+}
+
+export interface BaselineReport {
+    expectancyNote: string;
+}
+
+export interface PotentialLimits {
+    maximumPotential: number;
+    potentialVerdict: string;
+    range: string;
+}
+
+export interface MarketSimulation {
+    name: string;
+    rawProb: number;
+    phaseAlignment: number;
+    suretyScore: number;
+}
+
+export interface SimulationResult {
+    probability: number;
+    baselineRisk: number;
+    baselineReport: BaselineReport;
+    potentialLimits: PotentialLimits;
+    marketAudits: MarketSimulation[];
+    outcomeRange: number;
+    stabilityScore: number; 
+    computeOptimized: boolean; 
+}
+
+export interface AnalysisConfidence {
+    confidenceScore: number;
+    verdict: 'GOLD' | 'SILVER' | 'BRONZE' | 'VOID';
+    isHighConfidence: boolean;
+    analysisReasoning: string[];
+    bestBet: MarketSimulation | null;
+    stabilityScore: number;
 }
 
 export interface AnalysisResult {
@@ -87,42 +111,18 @@ export interface AnalysisResult {
     summary: string;
     homeStats: TeamStats;
     awayStats: TeamStats;
-    sources: { title: string; uri: string }[];
     homeXG: number;
     awayXG: number;
-    rho: number;
-    regimePath: RegimeState[];
-    topTacticalPaths?: ViterbiPath[];
-    structuralFloor: number;
-    physicalCeiling: number;
-    structuralData: { floor: number, cushion: number };
-    signalPrecision: number;
-    physics: { metAudit: boolean, saturation: number, integrityScore: number };
+    dependence: number;
+    tacticalPath: TacticalPhase[];
+    topTacticalPaths?: TacticalSequence[];
+    minimumExpectancy: number;
+    potentialCeiling: number;
+    prediction?: string;
+    predictionType?: 'OVER' | 'UNDER' | 'BTTS' | 'WIN' | 'DRAW' | 'STABILITY';
     context: MatchContext;
-    marketReality: MarketReality;
-    mirrorMatches: MirrorMatch[];
-    prosecution: ProsecutionCase;
+    marketIndicators: MarketIndicators;
+    dataConsistency: DataConsistencyReport;
     modelAudit: ModelAudit;
-    // System Status
-    killSwitchTriggered: boolean;
-    maxVariance: number;
-    modelMode: 'NUCLEAR_FORTRESS' | 'POISSON_FALLBACK';
-    matchContextFlag?: 'Dead-Rubber' | 'Derby' | 'Standard';
-    calibration?: CalibrationMatrix;
-    groundingStatus?: 'OPTIMAL' | 'DEGRADED' | 'FAILED' | 'QUOTA_EXCEEDED' | 'SEARCH_COOLDOWN';
-    ingestedDataSummary?: string;
-}
-
-export interface CalibrationMatrix {
-    understatBias: number;
-    sofaScoreBias: number;
-    calibrationConfidence: number;
-    aiStructuralFloor?: number;
-    aiPhysicalCeiling?: number;
-}
-
-export interface ModelAudit {
-    forensicIntegrity: number;
-    recursiveFilterMomentum: number;
-    noiseRatio: number;
+    adjustment?: AdjustmentMatrix;
 }

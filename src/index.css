@@ -5,7 +5,7 @@
 
 @layer base {
   body {
-    @apply bg-black text-emerald-500 font-sans selection:bg-emerald-500/20 uppercase;
+    @apply bg-black text-emerald-500 font-mono selection:bg-emerald-500/20 uppercase overflow-x-hidden;
   }
 
   /* Custom Scrollbar */
