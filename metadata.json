@@ -1,6 +1,6 @@
 {
-  "name": "Match Report Analysis",
-  "description": "Professional football analysis tool for match predictions and statistical insights using AI-powered search and simulations.",
+  "name": "Match Report",
+  "description": "Professional football analytics tool providing tactical insights and predictive projections using real-time data.",
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ],

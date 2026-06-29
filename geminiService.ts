@@ -3,27 +3,28 @@ import {
     calculateProbability, 
     calculateMatchExpectancy,
     findTopTacticalPaths,
+    calculateConfidenceAudit,
     IngestionService
 } from "./src/services/engine";
 import { getTeamBaseline } from "./src/services/baselineDataService";
 import { AnalysisResult } from "./src/types";
 
-const PRIMARY_MODEL = 'gemini-1.5-flash-latest'; 
-const FALLBACK_MODEL = 'gemini-1.5-flash-8b-latest';
-
-// --- MINIMAL QUEUE ---
-let activeRequests = 0;
-const MAX_CONCURRENT = 1;
+const PRIMARY_MODEL = 'gemini-3.5-flash'; 
+const FALLBACK_MODEL = 'gemini-flash-latest';
+const cache = new Map<string, { result: AnalysisResult, timestamp: number }>();
+const CACHE_TTL = 15 * 60 * 1000;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const getAI = () => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("GEMINI_API_KEY required.");
-    return new GoogleGenAI({ apiKey });
+    return new GoogleGenAI({ 
+        apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+    });
 };
 
-// --- SCHEMA ---
 const teamSchemaProperties = {
     name: { type: Type.STRING },
     goalsScored: { type: Type.NUMBER },
@@ -62,9 +63,11 @@ const analysisSchema = {
             type: Type.OBJECT, 
             properties: {
                 weather: { type: Type.STRING },
-                matchContextFlag: { type: Type.STRING, enum: ["Dead-Rubber", "Derby", "Standard"] }
+                matchContextFlag: { type: Type.STRING, enum: ["Dead-Rubber", "Derby", "Standard"] },
+                marketSentiment: { type: Type.STRING },
+                tacticalDrift: { type: Type.STRING }
             },
-            required: ["weather", "matchContextFlag"]
+            required: ["weather", "matchContextFlag", "marketSentiment", "tacticalDrift"]
         },
         marketIndicators: {
             type: Type.OBJECT,
@@ -90,81 +93,106 @@ const analysisSchema = {
     required: ["home", "away", "context", "marketIndicators", "matchSummary", "adjustment", "ingestedDataSummary"]
 };
 
-const generateAnalysisPrompt = (req: any, baselines: any, isSearchEnabled: boolean) => {
-    return `ANALYZE_MATCH: ${req.homeTeam} vs ${req.awayTeam} (${req.league}). 
-    Home Baseline: ${JSON.stringify(baselines.home)}
-    Away Baseline: ${JSON.stringify(baselines.away)}
-    Search Enabled: ${isSearchEnabled}.
-    Provide a detailed match analysis based on current team form and underlying metrics.
-    Return JSON per schema.`;
-};
+const SystemLog = (msg: string) => console.log(`[SIGNAL] ${msg}`);
+
+const SYSTEM_INSTRUCTION = `Lead Quantitative Data Architect. Objective: ZBIE. Extract Tactical Drifts, Market Anomaly, Statistical Purity. Return strict JSON.`;
+
+const generateAnalysisPrompt = (req: any, baselines: any) => `
+    EXECUTE SIGNAL HARVESTING: ${req.homeTeam} vs ${req.awayTeam} (League: ${req.league || 'Unknown'})
+    1. SEARCH: Weather, referee, team news.
+    2. ANALYZE: Compare findings against baselines: Home: ${JSON.stringify(baselines.home)}, Away: ${JSON.stringify(baselines.away)}
+    3. QUANTIFY: Return JSON report citing findings in 'matchSummary'.`;
 
 const generateFallbackAnalysis = (req: any): AnalysisResult => {
     const home = getTeamBaseline(req.homeTeam);
     const away = getTeamBaseline(req.awayTeam);
     const hP = IngestionService.standardize({ ...home, name: req.homeTeam }, { adjustmentA: 1, adjustmentB: 1 });
     const aP = IngestionService.standardize({ ...away, name: req.awayTeam }, { adjustmentA: 1, adjustmentB: 1 });
-    const dc = calculateMatchExpectancy(hP, aP, 0.2, 0);
+    const dc = calculateMatchExpectancy(hP, aP, 0.2, 0, { 
+        weather: "STANDARD", 
+        stakes: "STANDARD", 
+        marketSentiment: "NEUTRAL", 
+        tacticalDrift: "STABLE" 
+    });
     const topPaths = findTopTacticalPaths(dc.homeScoring, dc.awayScoring);
-    const math = calculateProbability(dc.homeScoring, dc.awayScoring, dc.dependence, topPaths[0].phases);
-
+    const verifiedPath = topPaths[0];
+    const math = calculateProbability(dc.homeScoring, dc.awayScoring, dc.dependence, verifiedPath.phases);
+    const xGSum = dc.homeScoring + dc.awayScoring;
+    
     return {
         probability: math.probability,
-        summary: `Reference projection based on historical averages.`,
+        summary: `Reference projection based on historical averages (Fallback Mode).`,
         homeStats: hP,
         awayStats: aP,
         homeXG: dc.homeScoring,
         awayXG: dc.awayScoring,
         dependence: dc.dependence,
-        tacticalPath: topPaths[0].phases,
-        prediction: dc.homeScoring + dc.awayScoring > 1.5 ? "OVER 1.5 GOALS" : "UNDER 3.5 GOALS",
-        predictionType: dc.homeScoring + dc.awayScoring > 1.5 ? "OVER" : "UNDER",
+        tacticalPath: verifiedPath.phases,
+        verifiedOptimalPath: verifiedPath,
+        prediction: xGSum > 2.5 ? "OVER 2.5" : (xGSum > 1.5 ? "OVER 1.5" : "UNDER 3.5"),
+        predictionType: xGSum > 1.5 ? "OVER" : "UNDER",
         minimumExpectancy: (hP.npxG + aP.npxG) * 0.6,
         potentialCeiling: 3.5,
-        context: { weather: "Standard", referee: "Neutral", stadium: "Neutral", historicalRivalry: 0.3, stakes: "Standard" },
-        marketIndicators: { volume: "MEDIUM", marketDivergence: 0, sentimentScore: 0.5, marketMovementSignal: 0 },
-        dataConsistency: { contradictions: ["Fallback used"], riskScore: 0.3 },
+        context: { weather: "Standard", stakes: "Standard", marketSentiment: "Neutral", tacticalDrift: "Stable" },
+        marketIndicators: { volume: "MEDIUM", sentimentScore: 0.5 },
         modelAudit: { signalPurity: 0.7, analysisStability: 0.7, noiseRatio: 0.3 },
-        adjustment: { adjustmentA: 1, adjustmentB: 1, reliabilityScore: 0.6 }
+        surety: calculateConfidenceAudit(math.probability, { signalPurity: 0.7, analysisStability: 0.7, noiseRatio: 0.3 })
     };
 };
 
 export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
-    if (activeRequests >= MAX_CONCURRENT) {
-        return generateFallbackAnalysis(req);
-    }
+    const cacheKey = `${req.homeTeam}-${req.awayTeam}-${req.league}`.toLowerCase().replace(/\s/g, '');
+    const cachedEntry = cache.get(cacheKey);
+    if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_TTL)) return cachedEntry.result;
 
     const ai = getAI();
-    activeRequests++;
-    
     let retryCount = 0;
     const maxRetries = 2;
 
     const attemptAnalysis = async (modelName: string): Promise<AnalysisResult | null> => {
         try {
-            await sleep(500 * (retryCount + 1)); // Backoff
-            const homeBaseline = getTeamBaseline(req.homeTeam);
-            const awayBaseline = getTeamBaseline(req.awayTeam);
+            SystemLog(`Probing: ${modelName}`);
+            
+            // Exponential backoff
+            if (retryCount > 0) {
+                const waitTime = Math.pow(2, retryCount) * 1000;
+                SystemLog(`Backoff: waiting ${waitTime}ms...`);
+                await sleep(waitTime);
+            }
+
+            const baselines = { home: getTeamBaseline(req.homeTeam), away: getTeamBaseline(req.awayTeam) };
             
             const response = await ai.models.generateContent({
                 model: modelName,
-                contents: [{ role: "user", parts: [{ text: generateAnalysisPrompt(req, { home: homeBaseline, away: awayBaseline }, !!req.isSearchEnabled) }] }],
+                contents: [{ role: "user", parts: [{ text: generateAnalysisPrompt(req, baselines) }] }],
                 config: { 
+                    systemInstruction: SYSTEM_INSTRUCTION,
                     responseMimeType: "application/json", 
-                    responseSchema: analysisSchema as any 
+                    responseSchema: analysisSchema as any,
+                    tools: [{ googleSearch: {} }] as any
                 }
             });
 
             if (!response.text) return null;
             const parsed = JSON.parse(response.text.trim());
-            
+            const normalize = (s: string | undefined, fallback: string) => (s && s.length > 2) ? s.trim().toUpperCase() : fallback;
+
             const hD = IngestionService.standardize(parsed.home, parsed.adjustment);
             const aD = IngestionService.standardize(parsed.away, parsed.adjustment);
-            const dc = calculateMatchExpectancy(hD, aD, 0.2, parsed.marketIndicators.marketMovementSignal);
-            const topPaths = findTopTacticalPaths(dc.homeScoring, dc.awayScoring);
-            const math = calculateProbability(dc.homeScoring, dc.awayScoring, dc.dependence, topPaths[0].phases);
+            const context = {
+                weather: normalize(parsed.context?.weather, "STANDARD"),
+                stakes: normalize(parsed.context?.matchContextFlag, "STANDARD"),
+                marketSentiment: normalize(parsed.context?.marketSentiment, "NEUTRAL"),
+                tacticalDrift: normalize(parsed.context?.tacticalDrift, "STABLE")
+            };
 
-            return {
+            const dc = calculateMatchExpectancy(hD, aD, 0.2, parsed.marketIndicators.marketMovementSignal, context);
+            const topPaths = findTopTacticalPaths(dc.homeScoring, dc.awayScoring);
+            const verifiedPath = topPaths[0];
+            const math = calculateProbability(dc.homeScoring, dc.awayScoring, dc.dependence, verifiedPath.phases);
+            const audit = { signalPurity: 0.9, analysisStability: 0.85, noiseRatio: 0.1 };
+
+            const finalResult: AnalysisResult = {
                 probability: math.probability,
                 summary: parsed.matchSummary,
                 homeStats: hD,
@@ -172,45 +200,37 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
                 homeXG: dc.homeScoring,
                 awayXG: dc.awayScoring,
                 dependence: dc.dependence,
-                tacticalPath: topPaths[0].phases,
-                prediction: parsed.prediction || (dc.homeScoring + dc.awayScoring > 1.5 ? "OVER 1.5 GOALS" : "UNDER 3.5 GOALS"),
-                predictionType: parsed.predictionType || (dc.homeScoring + dc.awayScoring > 1.5 ? "OVER" : "UNDER"),
+                tacticalPath: verifiedPath.phases,
+                verifiedOptimalPath: verifiedPath,
+                prediction: parsed.prediction || (dc.homeScoring + dc.awayScoring > 1.5 ? "OVER 1.5" : "UNDER 3.5"),
+                predictionType: (parsed.predictionType || (dc.homeScoring + dc.awayScoring > 1.5 ? "OVER" : "UNDER")) as any,
                 minimumExpectancy: parsed.adjustment.aiScoringBaseline || 0.5,
                 potentialCeiling: parsed.adjustment.aiPotentialLimit || 3.5,
-                context: {
-                    weather: parsed.context.weather || "Standard",
-                    referee: "Neutral", stadium: "Neutral", historicalRivalry: 0.5, stakes: "Standard"
-                },
-                marketIndicators: {
-                    volume: "MEDIUM", marketDivergence: 0, sentimentScore: 0.5,
-                    marketMovementSignal: parsed.marketIndicators.marketMovementSignal || 0
-                },
-                dataConsistency: { contradictions: [], riskScore: 0.1 },
-                modelAudit: { signalPurity: 0.8, analysisStability: 0.8, noiseRatio: 0.2 },
-                adjustment: parsed.adjustment
+                context,
+                marketIndicators: { volume: "MEDIUM", sentimentScore: 0.5 },
+                modelAudit: audit,
+                surety: calculateConfidenceAudit(math.probability, audit)
             };
+
+            cache.set(cacheKey, { result: finalResult, timestamp: Date.now() });
+            return finalResult;
         } catch (e: any) {
-            console.warn(`Attempt ${retryCount + 1} failed for ${modelName}:`, e.message);
-            if (e.message?.includes('429') || e.message?.includes('RESOURCE_EXHAUSTED')) {
-                return null;
+            const isQuotaError = e.message?.includes("429") || e.message?.includes("RESOURCE_EXHAUSTED");
+            SystemLog(`${isQuotaError ? 'QUOTA EXCEEDED' : 'FAILED'}: ${e.message}`);
+            
+            // If it's a quota error and we are out of retries, we'll hit the fallback
+            if (isQuotaError && retryCount >= maxRetries) {
+                SystemLog("Quota depleted. Falling back to statistical engine.");
             }
-            throw e;
+            return null;
         }
     };
 
-    try {
-        let result = await attemptAnalysis(PRIMARY_MODEL);
-        
-        while (!result && retryCount < maxRetries) {
-            retryCount++;
-            result = await attemptAnalysis(retryCount === maxRetries ? FALLBACK_MODEL : PRIMARY_MODEL);
-        }
-
-        return result || generateFallbackAnalysis(req);
-    } catch (e) {
-        console.error("Critical Analysis Error:", e);
-        return generateFallbackAnalysis(req);
-    } finally {
-        activeRequests--;
+    let result = await attemptAnalysis(PRIMARY_MODEL);
+    while (!result && retryCount < maxRetries) {
+        retryCount++;
+        result = await attemptAnalysis(retryCount === 1 ? FALLBACK_MODEL : PRIMARY_MODEL);
     }
+    return result || generateFallbackAnalysis(req);
 };
+

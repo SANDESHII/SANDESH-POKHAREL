@@ -9,17 +9,21 @@ async function startServer() {
 
   app.use(express.json());
 
-  // API routes
+  // Health check
+  app.get("/api/health", (_, res) => res.json({ status: "ok" }));
+
+  // Main Analysis Endpoint
   app.post("/api/analyze", async (req, res) => {
     try {
       const result = await performAnalysis(req.body);
       res.json(result);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error("[SERVER] Analysis Error:", error);
+      res.status(500).json({ error: error.message || "Internal Analysis Failure" });
     }
   });
 
-  // Vite middleware for development
+  // Vite Integration
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -27,16 +31,19 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get('*all', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.get("*all", (_, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`[SERVER] Match Report Engine Active: http://localhost:${PORT}`);
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("[SERVER] Critical Startup Error:", err);
+  process.exit(1);
+});

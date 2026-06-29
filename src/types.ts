@@ -1,13 +1,4 @@
 
-export interface MatchHistoryItem {
-    goalsScored: number;
-    goalsConceded: number;
-    xgScored: number;
-    xgConceded: number;
-    daysAgo: number;
-    isHome: boolean;
-}
-
 export interface TeamStats {
     name: string;
     goalsScored: number;
@@ -22,8 +13,9 @@ export interface TeamStats {
     cleanSheets: number;
     npxGSequence?: number[];
     xGASequence?: number[];
-    matchHistory?: MatchHistoryItem[];
+    matchHistory?: any[];
     calibrationStability?: number;
+    dataPurity?: number;
 }
 
 export interface TacticalPhase {
@@ -32,35 +24,11 @@ export interface TacticalPhase {
     intensity: number;
 }
 
-export interface MatchContext {
-    weather: string;
-    referee: string;
-    stadium: string;
-    historicalRivalry: number;
-    stakes: string;
-}
-
-export interface MarketIndicators {
-    volume: "HIGH" | "MEDIUM" | "LOW";
-    marketDivergence: number;
-    sentimentScore: number;
-    marketMovementSignal: number;
-}
-
-export interface DataConsistencyReport {
-    contradictions: string[];
-    riskScore: number;
-}
-
 export interface TacticalSequence {
+    label?: string;
     phases: TacticalPhase[];
     likelihood: number;
-}
-
-export interface AdjustmentMatrix {
-    adjustmentA: number;
-    adjustmentB: number;
-    reliabilityScore: number;
+    accuracyScore?: number;
 }
 
 export interface ModelAudit {
@@ -69,41 +37,17 @@ export interface ModelAudit {
     noiseRatio: number;
 }
 
-export interface BaselineReport {
-    expectancyNote: string;
-}
-
-export interface PotentialLimits {
-    maximumPotential: number;
-    potentialVerdict: string;
-    range: string;
-}
-
-export interface MarketSimulation {
-    name: string;
-    rawProb: number;
-    phaseAlignment: number;
-    suretyScore: number;
-}
-
-export interface SimulationResult {
-    probability: number;
-    baselineRisk: number;
-    baselineReport: BaselineReport;
-    potentialLimits: PotentialLimits;
-    marketAudits: MarketSimulation[];
-    outcomeRange: number;
-    stabilityScore: number; 
-    computeOptimized: boolean; 
-}
-
 export interface AnalysisConfidence {
     confidenceScore: number;
     verdict: 'GOLD' | 'SILVER' | 'BRONZE' | 'VOID';
-    isHighConfidence: boolean;
     analysisReasoning: string[];
-    bestBet: MarketSimulation | null;
-    stabilityScore: number;
+}
+
+export interface MatchContext {
+    weather: string;
+    stakes: string;
+    marketSentiment?: string;
+    tacticalDrift?: string;
 }
 
 export interface AnalysisResult {
@@ -115,14 +59,16 @@ export interface AnalysisResult {
     awayXG: number;
     dependence: number;
     tacticalPath: TacticalPhase[];
-    topTacticalPaths?: TacticalSequence[];
+    verifiedOptimalPath?: TacticalSequence;
     minimumExpectancy: number;
     potentialCeiling: number;
     prediction?: string;
     predictionType?: 'OVER' | 'UNDER' | 'BTTS' | 'WIN' | 'DRAW' | 'STABILITY';
     context: MatchContext;
-    marketIndicators: MarketIndicators;
-    dataConsistency: DataConsistencyReport;
+    marketIndicators: {
+        volume: string;
+        sentimentScore: number;
+    };
     modelAudit: ModelAudit;
-    adjustment?: AdjustmentMatrix;
+    surety?: AnalysisConfidence;
 }

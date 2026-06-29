@@ -1,44 +1,119 @@
 
-import { TeamStats, TacticalPhase, TacticalSequence, SimulationResult, AnalysisConfidence, MarketSimulation, BaselineReport, PotentialLimits, ModelAudit } from '../types';
+import { TeamStats, TacticalPhase, TacticalSequence, AnalysisConfidence, ModelAudit, MatchContext } from '../types';
 
 // --- INGESTION LOGIC ---
 
 export class IngestionService {
-    static standardize(team: any, matrix: any): TeamStats {
-        const adjustmentA = matrix?.adjustmentA || 0.88;
-        const adjustmentB = matrix?.adjustmentB || 0.94;
+    private static clean(v: any, fallback: number = 0): number {
+        if (typeof v === 'number') return isNaN(v) ? fallback : v;
+        if (typeof v === 'string') {
+            const sanitized = v.replace(/%/g, '').replace(/[^0-9.-]/g, '');
+            const parsed = parseFloat(sanitized);
+            if (isNaN(parsed)) return fallback;
+            // Handle percentages (e.g. "75%" -> 0.75)
+            if (v.includes('%') && parsed > 1) return parsed / 100;
+            return parsed;
+        }
+        return fallback;
+    }
 
-        const parse = (v: any) => {
-            if (typeof v === 'number') return v;
-            if (typeof v === 'string') return parseFloat(v.replace(/[^0-9.]/g, '')) || 0;
-            return 0;
-        };
+    private static clamp(v: number, min: number, max: number): number {
+        return Math.max(min, Math.min(max, v));
+    }
 
-        const npxG = parse(team.npxG);
-        const xT = parse(team.xT);
+    /**
+     * TACTICAL SIGNAL QUANTIFICATION
+     * Converts soft textual signals into mathematical coefficients for the engine.
+     */
+    static quantifySignal(signal: string, type: 'DRIFT' | 'SENTIMENT' | 'STAKES'): number {
+        const s = (signal || '').toUpperCase();
+        switch (type) {
+            case 'DRIFT':
+                if (s.includes('VOLATILE')) return 1.45;
+                if (s.includes('FLUX')) return 1.20;
+                if (s.includes('STABLE')) return 0.75;
+                return 1.0;
+            case 'SENTIMENT':
+                if (s.includes('BULLISH')) return 0.15; // Positive market pressure
+                if (s.includes('BEARISH')) return -0.15; // Negative market pressure
+                return 0;
+            case 'STAKES':
+                if (s.includes('CRITICAL')) return 1.15; // High pressure increases intensity
+                if (s.includes('STANDARD')) return 1.0;
+                if (s.includes('DEAD-HEAT')) return 0.85; // Lower intensity
+                return 1.0;
+            default:
+                return 1.0;
+        }
+    }
+
+    /**
+     * Standardizes raw input data into structured signals.
+     */
+    static standardize(team: Record<string, any>, matrix: Record<string, any>): TeamStats {
+        const adjA = this.clamp(this.clean(matrix?.adjustmentA, 0.88), 0.5, 1.2);
+        const reliability = this.clamp(this.clean(matrix?.reliabilityScore, 0.5), 0, 1.0);
+
+    // 1. Signal Extraction
+    const rawNPXG = this.clamp(this.clean(team.npxG), 0, 5.5);
+    const rawXT = this.clamp(this.clean(team.xT), 0, 5.5);
+    const baselineXG = this.clamp(this.clean(team.avgXG), 0, 5.0);
+    
+    // 2. Data Harmonization
+    const aiWeight = this.clamp(reliability * 0.9, 0.4, 0.9);
+    const baselineWeight = 1 - aiWeight;
+    
+    const aiSignal = (rawNPXG * adjA + rawXT * (1 - adjA));
+    let finalizedExpectancy = (aiSignal * aiWeight) + (baselineXG * baselineWeight);
+
+    // 3. Volatility Analysis
+    const sterilizeArray = (arr: any[], limit: number = 5) => {
+        const cleanArr = (Array.isArray(arr) ? arr : []).map(v => this.clamp(this.clean(v), 0, 6.0));
+        return cleanArr.slice(-limit);
+    };
+
+    const npxGSeq = sterilizeArray(team.npxGSequence);
+    const xGASeq = sterilizeArray(team.xGASequence);
+
+    // 4. Signal Fidelity Check
+    let signalFidelity = 1.0;
+    const divergence = Math.abs(rawNPXG - rawXT);
+    if (divergence > 1.2) signalFidelity *= 0.92;
+
+    if (npxGSeq.length >= 3) {
+        const mean = npxGSeq.reduce((a, b) => a + b, 0) / npxGSeq.length;
+        const variance = npxGSeq.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / npxGSeq.length;
+        const stdDev = Math.sqrt(variance);
         
-        const weightedG = (npxG * adjustmentA + xT * (1 - adjustmentA));
-        const finalNPXG = (weightedG + parse(team.avgXG)) / 2;
+        const zScore = stdDev > 0 ? Math.abs(finalizedExpectancy - mean) / stdDev : 0;
+        if (zScore > 2.0) {
+            finalizedExpectancy = mean + (Math.sign(finalizedExpectancy - mean) * 2.0 * stdDev);
+            signalFidelity = 0.85; 
+        }
+    }
 
-        const shift = Math.abs(finalNPXG - parse(team.avgXG));
-        const calibrationStability = Math.max(0, 1 - (shift * 2));
+    // 5. Stability Metrics
+    const shift = Math.abs(finalizedExpectancy - baselineXG);
+    const calibrationStability = this.clamp(1 - (shift * 1.5) - ((1 - reliability) * 0.15), 0.1, 1.0);
+    const dataPurity = this.clamp(signalFidelity - (shift * 0.2), 0.1, 1.0);
 
         return {
-            ...team,
-            npxG: finalNPXG,
-            xT: parse(team.xT),
-            avgXG: parse(team.avgXG),
-            avgXGA: parse(team.avgXGA),
-            goalsScored: parse(team.goalsScored),
-            goalsConceded: parse(team.goalsConceded),
-            defensiveStability: parse(team.defensiveStability) || 0.5,
-            offensiveVolatility: parse(team.offensiveVolatility) || 0.5,
-            form: Array.isArray(team.form) ? team.form.map(parse) : [0.5],
-            cleanSheets: parse(team.cleanSheets),
+            name: String(team.name || "Unknown"),
+            npxG: finalizedExpectancy,
+            xT: rawXT,
+            avgXG: baselineXG,
+            avgXGA: this.clamp(this.clean(team.avgXGA), 0, 5.0),
+            goalsScored: this.clean(team.goalsScored),
+            goalsConceded: this.clean(team.goalsConceded),
+            defensiveStability: this.clamp(this.clean(team.defensiveStability, 0.5), 0.05, 1.0),
+            offensiveVolatility: this.clamp(this.clean(team.offensiveVolatility, 0.5), 0.05, 1.0),
+            form: (Array.isArray(team.form) ? team.form : [0.5]).map((v: number) => this.clamp(this.clean(v, 0.5), 0, 1.0)),
+            cleanSheets: this.clean(team.cleanSheets),
             calibrationStability,
-            npxGSequence: Array.isArray(team.npxGSequence) ? team.npxGSequence.map(parse) : [],
-            xGASequence: Array.isArray(team.xGASequence) ? team.xGASequence.map(parse) : [],
-            matchHistory: Array.isArray(team.matchHistory) ? team.matchHistory : []
+            dataPurity,
+            npxGSequence: npxGSeq,
+            xGASequence: xGASeq,
+            matchHistory: Array.isArray(team.matchHistory) ? team.matchHistory.slice(-5) : []
         };
     }
 }
@@ -48,73 +123,104 @@ export class IngestionService {
 class SignalFilter {
     private state: number;
     private uncertainty: number;
+    private gain: number = 0.5;
 
     constructor(initialState: number) {
         this.state = initialState;
-        this.uncertainty = 0.5;
+        this.uncertainty = 1.0; // Initial state uncertainty
     }
 
-    update(measurement: number, dataNoise: number, stateDrift: number, deltaT: number = 1.0): number {
-        this.uncertainty = this.uncertainty + (stateDrift * deltaT);
-        const weight = this.uncertainty / (this.uncertainty + dataNoise);
-        this.state = this.state + weight * (measurement - this.state);
-        this.uncertainty = (1 - weight) * this.uncertainty;
+    update(measurement: number, dataNoise: number, stateDrift: number, driftCoefficient: number = 1.0): number {
+        const adjustedDrift = Math.max(0.01, stateDrift * driftCoefficient);
+        this.uncertainty = this.uncertainty + adjustedDrift;
+        
+        const innovation = measurement - this.state;
+        const innovationCovariance = this.uncertainty + dataNoise;
+        
+        const zScoreSq = (innovation * innovation) / Math.max(1e-6, innovationCovariance);
+        const gatingMultiplier = zScoreSq > 9 ? 0.4 : 1.0; 
+
+        this.gain = (this.uncertainty / Math.max(1e-9, innovationCovariance)) * gatingMultiplier;
+        this.state = this.state + this.gain * innovation;
+        
+        const common = (1 - this.gain);
+        this.uncertainty = (common * this.uncertainty * common) + (this.gain * dataNoise * this.gain);
+        
         return this.state;
     }
 }
 
-function calculateEntropy(form: number[]): number {
-    const total = form.reduce((a, b) => a + b, 0) || 1;
-    let entropy = 0;
-    form.forEach(val => {
-        const p = val / total;
-        if (p > 0) entropy -= p * Math.log2(p);
-    });
-    return Math.min(1.0, entropy / 2.32);
-}
-
-function estimateState(team: TeamStats, noise: number): number {
-    const history = team.matchHistory || [];
-    let sequence: number[] = history.length > 0 ? history.map(m => m.xgScored) : (team.npxGSequence?.length ? team.npxGSequence : [team.npxG]);
-    
-    const entropy = calculateEntropy(team.form || [0.5]);
-    const drift = 0.005 + (entropy * 0.08);
-    const filter = new SignalFilter(sequence[0]);
-    
-    sequence.forEach(val => filter.update(val, noise, drift));
-    return filter.update(team.npxG, noise, drift);
-}
-
 // --- CORE MODELS ---
 
-export const calculateMatchExpectancy = (home: TeamStats, away: TeamStats, maxVariance: number, marketSignal: number) => {
-    const marketEffect = marketSignal > 0 ? 0.9 : 1.1;
-    const homeNoise = Math.max(0.05, (((1 - (home.defensiveStability || 0.5)) * 0.2) + ((home.offensiveVolatility || 0.5) * 0.1) + maxVariance) * marketEffect);
-    const awayNoise = Math.max(0.05, (((1 - (away.defensiveStability || 0.5)) * 0.2) + ((away.offensiveVolatility || 0.5) * 0.1) + maxVariance) * marketEffect);
+export const calculateMatchExpectancy = (
+    home: TeamStats, 
+    away: TeamStats, 
+    maxVariance: number, 
+    marketSignal: number, 
+    context?: MatchContext
+) => {
+    // 1. Signal Quantification Layer
+    const driftCoeff = IngestionService.quantifySignal(context?.tacticalDrift || 'STABLE', 'DRIFT');
+    const stakeCoeff = IngestionService.quantifySignal(context?.stakes || 'STANDARD', 'STAKES');
+    const marketAdj = IngestionService.quantifySignal(context?.marketSentiment || 'NEUTRAL', 'SENTIMENT');
+    
+    const marketEffect = (marketSignal > 0 ? 0.9 : 1.1) * stakeCoeff;
+    const calculateNoise = (team: TeamStats) => Math.max(0.05, (
+        ((1 - (team.defensiveStability || 0.5)) * 0.2) + 
+        ((team.offensiveVolatility || 0.5) * 0.1) + 
+        maxVariance + 
+        (1 - (team.dataPurity || 1)) * 0.15
+    ) * marketEffect);
+
+    const homeNoise = calculateNoise(home);
+    const awayNoise = calculateNoise(away);
 
     const leagueAvg = 1.35;
-    let homeParam = (estimateState(home, homeNoise) || 1.35) / leagueAvg;
-    let awayParam = (estimateState(away, awayNoise) || 1.35) / leagueAvg;
+    
+    // 2. Adaptive Estimation with Alpha Signals
+    const runEstimation = (team: TeamStats, noise: number) => {
+        const filter = new SignalFilter(team.avgXG || 1.35);
+        return filter.update(team.npxG || 1.35, noise, 0.05, driftCoeff);
+    };
 
-    // Numerical optimization for param convergence
-    for (let i = 0; i < 30; i++) {
-        homeParam = (homeParam + (home.npxG / leagueAvg)) / 2;
-        awayParam = (awayParam + (away.npxG / leagueAvg)) / 2;
-    }
+    let homeParam = ((runEstimation(home, homeNoise) || 1.35) / leagueAvg) + marketAdj;
+    let awayParam = ((runEstimation(away, awayNoise) || 1.35) / leagueAvg) - marketAdj;
+
+    // Numerical optimization: Weighted Moving Average with Learning Rate
+        const learningRate = 0.15;
+        for (let i = 0; i < 20; i++) {
+            const homeTarget = (home.npxG / leagueAvg);
+            const awayTarget = (away.npxG / leagueAvg);
+            homeParam += (homeTarget - homeParam) * learningRate;
+            awayParam += (awayTarget - awayParam) * learningRate;
+            
+            // Convergence check
+            if (Math.abs(homeTarget - homeParam) < 1e-4 && Math.abs(awayTarget - awayParam) < 1e-4) break;
+        }
 
     const homeLambda = Math.max(0.1, Math.min(6.5, homeParam * leagueAvg));
     const awayMu = Math.max(0.1, Math.min(6.5, awayParam * leagueAvg));
 
     const dependence = Math.min(0.1, Math.max(-0.25, (Math.tanh((home.avgXGA + away.avgXGA) / 5) * 0.1) - (Math.tanh(1 / (homeLambda + awayMu + 0.5)) * 0.35)));
     
-    return { homeScoring: homeLambda, awayScoring: awayMu, dependence, credibilityScore: calculateCredibility(home, away) };
+    return { homeScoring: homeLambda, awayScoring: awayMu, dependence };
 };
 
 export const calculateProbability = (hScoring: number, aScoring: number, dependence: number, phases: TacticalPhase[]) => {
-    const factorial = (n: number): number => n <= 1 ? 1 : n * factorial(n - 1);
-    const poisson = (k: number, lambda: number) => (Math.pow(lambda, k) * Math.exp(-lambda)) / factorial(k);
+    // Log-space Factorial to prevent overflow
+    const logFactorial = (n: number): number => {
+        let res = 0;
+        for (let i = 2; i <= n; i++) res += Math.log(i);
+        return res;
+    };
+
+    const logPoisson = (k: number, lambda: number) => {
+        if (lambda <= 0) return k === 0 ? 0 : -Infinity;
+        return k * Math.log(lambda) - lambda - logFactorial(k);
+    };
 
     const getAdj = (x: number, y: number, hL: number, aL: number, d: number) => {
+        // Dixon-Coles Tau adjustment (Simplified)
         if (x === 0 && y === 0) return 1 - (hL * aL * d);
         if (x === 1 && y === 0) return 1 + (aL * d);
         if (x === 0 && y === 1) return 1 + (hL * d);
@@ -122,268 +228,145 @@ export const calculateProbability = (hScoring: number, aScoring: number, depende
         return 1;
     };
 
-    let pW = 0, pD = 0, pL = 0, total = 0;
-    for (let h = 0; h <= 8; h++) {
-        for (let a = 0; a <= 8; a++) {
-            const p = poisson(h, hScoring) * poisson(a, aScoring) * getAdj(h, a, hScoring, aScoring, dependence);
+    let pW = 0, pD = 0, pL = 0, total = 0, pOver15 = 0;
+    for (let h = 0; h <= 10; h++) {
+        for (let a = 0; a <= 10; a++) {
+            const logP = logPoisson(h, hScoring) + logPoisson(a, aScoring);
+            const p = Math.exp(logP) * getAdj(h, a, hScoring, aScoring, dependence);
             if (h > a) pW += p; else if (h === a) pD += p; else pL += p;
+            if (h + a > 1.5) pOver15 += p;
             total += p;
         }
     }
 
-    const prob = Math.max(pW, pD, pL) / total;
-    const chaos = phases.filter(p => p.state === 'HIGH_VARIANCE').length / phases.length;
-    const finalProb = prob + (prob * (chaos * 0.1));
+    // Advanced weight: normalize by total sum to ensure probability stays within [0,1]
+    const baseProb = pOver15 / Math.max(1e-6, total);
+    const chaos = phases.length > 0 ? phases.filter(p => p.state === 'HIGH_VARIANCE').length / phases.length : 0;
+    
+    // Final result incorporates high-variance tactical phases as a confidence modifier
+    const finalProb = baseProb + (baseProb * (chaos * 0.12));
 
-    return { probability: Math.round(finalProb * 100), homeXG: hScoring, awayXG: aScoring };
+    return { probability: Math.round(Math.min(99, finalProb * 100)), homeXG: hScoring, awayXG: aScoring };
 };
 
 export const findTopTacticalPaths = (homeScoring: number, awayScoring: number): TacticalSequence[] => {
-    const baseIntensity = (homeScoring + awayScoring) * 35;
-    const phases = Array.from({ length: 10 }, (_, i) => {
-        const drift = Math.sin(i * 0.5) * 10;
-        const val = Math.max(20, Math.min(100, baseIntensity + drift));
-        let state: TacticalPhase['state'] = 'CONSERVATIVE';
-        if (val > 80) state = 'HIGH_VARIANCE';
-        else if (val > 60) state = 'TRANSITIONAL';
-        else if (val > 40) state = 'DOMINANT';
-        
-        return { state, intensity: val, confidence: 0.8 };
-    });
+    const states: TacticalPhase['state'][] = ['CONSERVATIVE', 'DOMINANT', 'TRANSITIONAL', 'HIGH_VARIANCE'];
+    const T = 10;
+    
+    const transitions: Record<TacticalPhase['state'], Record<TacticalPhase['state'], number>> = {
+        'CONSERVATIVE': { 'CONSERVATIVE': 0.6, 'DOMINANT': 0.3, 'TRANSITIONAL': 0.1, 'HIGH_VARIANCE': 0.0 },
+        'DOMINANT': { 'CONSERVATIVE': 0.2, 'DOMINANT': 0.5, 'TRANSITIONAL': 0.2, 'HIGH_VARIANCE': 0.1 },
+        'TRANSITIONAL': { 'CONSERVATIVE': 0.1, 'DOMINANT': 0.3, 'TRANSITIONAL': 0.4, 'HIGH_VARIANCE': 0.2 },
+        'HIGH_VARIANCE': { 'CONSERVATIVE': 0.0, 'DOMINANT': 0.1, 'TRANSITIONAL': 0.3, 'HIGH_VARIANCE': 0.6 }
+    };
 
-    return [{ phases, likelihood: 0.9 }];
+    const baseIntensity = (homeScoring + awayScoring) * 35;
+    
+    const pdf = (x: number, mean: number, stdDev: number) => {
+        const exponent = -Math.pow(x - mean, 2) / (2 * Math.pow(stdDev, 2));
+        return (1 / (stdDev * Math.sqrt(2 * Math.PI))) * Math.exp(exponent);
+    };
+
+    const getEmission = (state: TacticalPhase['state'], timeStep: number) => {
+        const obs = Math.max(0, Math.min(100, baseIntensity + Math.sin(timeStep * 0.5) * 8));
+        
+        switch (state) {
+            case 'CONSERVATIVE': return pdf(obs, 35, 12) * 10;
+            case 'DOMINANT':     return pdf(obs, 52, 10) * 10;
+            case 'TRANSITIONAL': return pdf(obs, 72, 12) * 10;
+            case 'HIGH_VARIANCE': return pdf(obs, 90, 15) * 10;
+            default: return 0.01;
+        }
+    };
+
+    const runViterbi = (biasTransitions: typeof transitions, label: string): TacticalSequence => {
+        const viterbi: number[][] = Array.from({ length: T }, () => Array(states.length).fill(-Infinity));
+        const backpointer: number[][] = Array.from({ length: T }, () => Array(states.length).fill(0));
+
+        const logTransitions: Record<string, Record<string, number>> = {};
+        states.forEach(s1 => {
+            logTransitions[s1] = {};
+            const rowSum = states.reduce((sum, s2) => sum + biasTransitions[s1][s2], 0);
+            states.forEach(s2 => {
+                const prob = (biasTransitions[s1][s2] + 1e-6) / (rowSum + 1e-6 * states.length);
+                logTransitions[s1][s2] = Math.log(prob);
+            });
+        });
+
+        for (let s = 0; s < states.length; s++) {
+            viterbi[0][s] = Math.log(1 / states.length) + Math.log(getEmission(states[s], 0) + 1e-10);
+        }
+
+        for (let t = 1; t < T; t++) {
+            for (let s = 0; s < states.length; s++) {
+                const logEmission = Math.log(getEmission(states[s], t) + 1e-10);
+                for (let prevS = 0; prevS < states.length; prevS++) {
+                    const prob = viterbi[t - 1][prevS] + logTransitions[states[prevS]][states[s]] + logEmission;
+                    if (prob > viterbi[t][s]) {
+                        viterbi[t][s] = prob;
+                        backpointer[t][s] = prevS;
+                    }
+                }
+            }
+        }
+
+        let maxLogProb = -Infinity;
+        let lastStateIdx = 0;
+        for (let s = 0; s < states.length; s++) {
+            if (viterbi[T - 1][s] > maxLogProb) {
+                maxLogProb = viterbi[T - 1][s];
+                lastStateIdx = s;
+            }
+        }
+
+        const pathIdx: number[] = [lastStateIdx];
+        for (let t = T - 1; t > 0; t--) {
+            lastStateIdx = backpointer[t][lastStateIdx];
+            pathIdx.unshift(lastStateIdx);
+        }
+
+        let totalFitness = 0;
+        let currentIntensity = baseIntensity;
+        
+        const phases: TacticalPhase[] = pathIdx.map((idx, t) => {
+            const state = states[idx];
+            const drift = 0.25 * (baseIntensity - currentIntensity); // Removed Math.random for stability
+            currentIntensity += drift;
+            const refinedIntensity = Math.max(20, Math.min(100, currentIntensity + Math.sin(t * 0.5) * 5));
+            const emissionProb = getEmission(state, t);
+            const fitness = Math.min(1.0, 0.4 + (emissionProb * 0.8));
+            totalFitness += fitness;
+
+            return {
+                state,
+                intensity: refinedIntensity,
+                confidence: 0.85
+            };
+        });
+
+        return { 
+            label, 
+            phases, 
+            likelihood: Math.min(0.98, 0.75 + Math.exp(maxLogProb / T) * 5), 
+            accuracyScore: totalFitness / T
+        };
+    };
+
+    return [runViterbi(transitions, 'OPTIMAL')];
 };
 
 // --- AUDITS & METRICS ---
 
-export const calculateCredibility = (home: TeamStats, away: TeamStats): number => {
-    const audit = (s: TeamStats) => {
-        const uncertainty = Math.abs(s.npxG - s.xT) * 0.4 + Math.abs(s.avgXG - s.avgXGA) * 0.2;
-        return 1 / (1 + uncertainty);
-    };
-    return Math.min(1.0, Math.max(0.1, (audit(home) + audit(away)) / 2));
-};
-
-// --- SURETY AUDIT ---
-
-export const runMatchSimulation = async (
-    initialProb: number, 
-    path: TacticalPhase[],
-    minExpectancy: number,
-    maxPotential: number,
-    homeName: string,
-    awayName: string,
-    homeScoring: number = 1.35, 
-    awayScoring: number = 1.35,     
-    accuracyWeight: number = 0.85, 
-    scoringConnection: number = 0,
-    homeVolatility: number = 0.5,
-    awayVolatility: number = 0.5,
-    homeStability: number = 0.5,
-    awayStability: number = 0.5,
-    topTacticalPaths: any[] = []
-): Promise<SimulationResult> => {
-    let homeWins = 0;
-    let draws = 0;
-    let awayWins = 0;
-    let homeOver05 = 0;
-    let homeOver15 = 0;
-    let awayOver05 = 0;
-    let awayOver15 = 0;
-    let totalOver05 = 0;
-    let totalOver15 = 0;
-    let totalOver25 = 0;
-    let totalOver35 = 0; 
-    let patternMatches = 0; 
-    let totalGoalsSum = 0;
-    let totalWeight = 0;
-    
-    const scoreGap = Math.abs(homeScoring - awayScoring);
-    const iterations = scoreGap > 1.75 ? 2000 : 17500;
-    const stressIterations = scoreGap > 1.75 ? 500 : 2500;
-    const batchSize = 2500;
-
-    const getAdjustment = (x: number, y: number, hS: number, aS: number, connection: number) => {
-        if (hS === 0 || aS === 0) return 1;
-        if (x === 0 && y === 0) return 1 - (hS * aS * connection);
-        if (x === 1 && y === 0) return 1 + (aS * connection);
-        if (x === 1 && y === 1) return 1 - connection;
-        if (x === 0 && y === 1) return 1 + (hS * connection);
-        return 1;
-    };
-    
-    const noiseFactor = Math.max(0.5, 1.5 - accuracyWeight);
-    let totalProbSum = 0;
-    let squaredProbSum = 0;
-    
-    for (let i = 0; i < iterations; i++) {
-        if (i > 0 && i % batchSize === 0) {
-            await new Promise(resolve => setTimeout(resolve, 0));
-        }
-
-        const varianceSignal = (Math.random() * 0.12 - 0.06) * noiseFactor;
-        const trendInfluence = path.reduce((acc, p) => acc + (p.confidence * p.intensity), 0) / (path.length * 100);
-        const currentProb = (initialProb / 100 + varianceSignal + trendInfluence);
-        
-        totalProbSum += currentProb;
-        squaredProbSum += currentProb * currentProb;
-
-        const hShift = (Math.random() * 0.2 - 0.1) * (homeVolatility || 0.5);
-        const aShift = (Math.random() * 0.2 - 0.1) * (awayVolatility || 0.5);
-
-        const hL = (homeScoring * (1 + hShift)) * (0.8 + (1 - (awayStability || 0.5)) * 0.4) * (currentProb * 2);
-        const aM = (awayScoring * (1 + aShift)) * (0.8 + (1 - (homeStability || 0.5)) * 0.4) * ((1 - currentProb) * 2);
-        
-        const combinedScoring = hL + aM;
-        const normalizedH = (hL / (combinedScoring || 1)) * minExpectancy;
-        const normalizedA = (aM / (combinedScoring || 1)) * minExpectancy;
-        
-        const simHomeGoalsRaw = predictGoals(normalizedH);
-        const simAwayGoalsRaw = predictGoals(normalizedA);
-        
-        let simHomeGoals = simHomeGoalsRaw;
-        let simAwayGoals = simAwayGoalsRaw;
-        if (simHomeGoals + simAwayGoals > maxPotential) {
-            const ratio = maxPotential / (simHomeGoals + simAwayGoals);
-            simHomeGoals = Math.floor(simHomeGoals * ratio);
-            simAwayGoals = Math.floor(simAwayGoals * ratio);
-        }
-
-        const totalGoals = simHomeGoals + simAwayGoals;
-        const weight = getAdjustment(simHomeGoals, simAwayGoals, normalizedH, normalizedA, scoringConnection);
-
-        totalWeight += weight;
-        totalGoalsSum += totalGoals * weight;
-
-        if (simHomeGoals > simAwayGoals) homeWins += weight;
-        else if (simHomeGoals === simAwayGoals) draws += weight;
-        else awayWins += weight;
-
-        if (simHomeGoals > 0) homeOver05 += weight;
-        if (simHomeGoals > 1) homeOver15 += weight;
-        if (simAwayGoals > 0) awayOver05 += weight;
-        if (simAwayGoals > 1) awayOver15 += weight;
-        if (totalGoals > 0) totalOver05 += weight;
-        if (totalGoals > 1) totalOver15 += weight;
-        if (totalGoals > 2) totalOver25 += weight;
-        if (totalGoals > 3) totalOver35 += weight;
-        if (totalGoals === 2 || totalGoals === 3) patternMatches += weight;
-    }
-    
-    const avgProb = totalProbSum / iterations;
-    const outcomeVariance = (squaredProbSum / iterations) - (avgProb * avgProb);
-    const rangeVal = Math.sqrt(Math.max(0, outcomeVariance));
-    const outcomeRange = rangeVal * 100;
-
-    let stableCount = 0;
-    for (let j = 0; j < stressIterations; j++) {
-        if (j > 0 && j % batchSize === 0) {
-            await new Promise(resolve => setTimeout(resolve, 0));
-        }
-
-        const stressReduction = 0.55 - (Math.random() * 0.1); 
-        const stressProb = (initialProb / 100) * stressReduction;
-        
-        const totalPower = homeScoring + awayScoring;
-        const sHomeScoring = (homeScoring / (totalPower || 1)) * minExpectancy * (stressProb * 2);
-        const sAwayScoring = (awayScoring / (totalPower || 1)) * minExpectancy * ((1 - stressProb) * 2);
-        
-        const sHomeGoalsRaw = predictGoals(sHomeScoring);
-        const sAwayGoalsRaw = predictGoals(sAwayScoring);
-        
-        let sHomeGoals = sHomeGoalsRaw;
-        let sAwayGoals = sAwayGoalsRaw;
-        if (sHomeGoals + sAwayGoals > maxPotential) {
-            const ratio = maxPotential / (sHomeGoals + sAwayGoals);
-            sHomeGoals = Math.floor(sHomeGoals * ratio);
-            sAwayGoals = Math.floor(sAwayGoals * ratio);
-        }
-
-        const sTotal = sHomeGoals + sAwayGoals;
-        if (sTotal >= 1 && sTotal <= 4) stableCount++;
-    }
-    const stabilityScore = (stableCount / stressIterations) * 100;
-
-    const checkAlignment = (marketName: string) => {
-        const isOver = marketName.includes('OVER') || marketName.includes('0.5');
-        const isUnder = marketName.includes('UNDER');
-        
-        const alignmentValue = path.reduce((acc, p) => {
-            let mult = 0;
-            if (p.state === 'DOMINANT' || p.state === 'HIGH_VARIANCE') mult = isOver ? 1 : -0.8;
-            if (p.state === 'CONSERVATIVE') mult = isUnder ? 1 : -0.8;
-            if (p.state === 'TRANSITIONAL') mult = 0.2;
-            return acc + (mult * (p.intensity / 100) * p.confidence);
-        }, 0);
-        
-        return Math.min(100, Math.max(0, 70 + (alignmentValue * 20)));
-    };
-
-    const complexityFactor = topTacticalPaths.length + (path.length / 4);
-    const accuracyDampener = Math.max(0.80, 1 - (complexityFactor * 0.02)); 
-
-    const baseSurety = Math.min(100, Math.max(0, (accuracyWeight * 100) - (outcomeRange * 0.8))) * accuracyDampener;
-
-    const marketAudits: MarketSimulation[] = [
-        { name: `${homeName} WIN`, rawProb: (homeWins / totalWeight) * 100, phaseAlignment: checkAlignment(`${homeName} WIN`), suretyScore: baseSurety * 1.05 },
-        { name: `${awayName} WIN`, rawProb: (awayWins / totalWeight) * 100, phaseAlignment: checkAlignment(`${awayName} WIN`), suretyScore: baseSurety * 1.05 },
-        { name: "DRAW", rawProb: (draws / totalWeight) * 100, phaseAlignment: checkAlignment("DRAW"), suretyScore: baseSurety * 0.8 },
-        { name: "TOTAL OVER 1.5", rawProb: (totalOver15 / totalWeight) * 100, phaseAlignment: checkAlignment("TOTAL OVER 1.5"), suretyScore: baseSurety },
-        { name: "TOTAL OVER 2.5", rawProb: (totalOver25 / totalWeight) * 100, phaseAlignment: checkAlignment("TOTAL OVER 2.5"), suretyScore: baseSurety * 0.9 },
-        { name: "TOTAL UNDER 3.5", rawProb: (1 - (totalOver35 / totalWeight)) * 100, phaseAlignment: checkAlignment("TOTAL UNDER 3.5"), suretyScore: baseSurety * 0.95 },
-        { name: "STABILITY PATTERN", rawProb: (patternMatches / totalWeight) * 100, phaseAlignment: checkAlignment("TOTAL OVER 1.5") * 0.5 + checkAlignment("TOTAL UNDER 3.5") * 0.5, suretyScore: baseSurety * 1.1 },
-        { name: `${homeName} OVER 0.5`, rawProb: (homeOver05 / totalWeight) * 100, phaseAlignment: checkAlignment("HOME OVER 0.5"), suretyScore: baseSurety * 1.1 },
-        { name: `${awayName} OVER 0.5`, rawProb: (awayOver05 / totalWeight) * 100, phaseAlignment: checkAlignment("AWAY OVER 0.5"), suretyScore: baseSurety * 1.1 },
-    ].map(m => ({ ...m, suretyScore: Math.min(100, m.suretyScore) }));
-
-    const baselineReport: BaselineReport = {
-        expectancyNote: minExpectancy > 1.8 ? "OVER 1.5 (STABLE)" : (minExpectancy > 1.2 ? "OVER 1.5" : "OVER 0.5")
-    };
-
-    const potentialLimits: PotentialLimits = {
-        maximumPotential: maxPotential,
-        potentialVerdict: `POTENTIAL: ${maxPotential?.toFixed(1) || '0.0'} GOALS`,
-        range: `${minExpectancy?.toFixed(1) || '0.0'}-${maxPotential?.toFixed(1) || '0.0'} GOALS`
-    };
-
-    const riskSignal = Math.min(95, (outcomeRange * 2.5) + (100 - initialProb) * 0.2);
-
-    return {
-        probability: initialProb,
-        baselineRisk: 0.5 + (outcomeRange / 100) + (riskSignal / 500),
-        baselineReport,
-        potentialLimits,
-        marketAudits,
-        outcomeRange,
-        stabilityScore,
-        computeOptimized: scoreGap > 1.75
-    };
-};
-
-function predictGoals(lambda: number): number {
-    let L = Math.exp(-lambda);
-    let p = 1.0;
-    let k = 0;
-    do {
-        k++;
-        p *= Math.random();
-    } while (p > L);
-    return k - 1;
-}
-
 export const calculateConfidenceAudit = (
-    simulation: SimulationResult,
+    probability: number,
     modelAudit: ModelAudit
 ): AnalysisConfidence => {
-    const score = (simulation.probability * 0.3) + (simulation.stabilityScore * 0.4) + (modelAudit.signalPurity * 20);
+    const score = (probability * 0.3) + (modelAudit.signalPurity * 50);
     const verdict = score > 75 ? 'GOLD' : (score > 55 ? 'SILVER' : 'BRONZE');
     
     return {
         confidenceScore: Math.min(100, score),
         verdict,
-        isHighConfidence: verdict === 'GOLD',
-        analysisReasoning: ["Pattern convergence optimal.", "Scoring baseline stable."],
-        bestBet: simulation.marketAudits.reduce((prev, curr) => (curr.rawProb * curr.suretyScore > prev.rawProb * prev.suretyScore) ? curr : prev),
-        stabilityScore: simulation.stabilityScore
+        analysisReasoning: ["Signal convergence optimal.", "Scoring baseline stable."]
     };
 };
