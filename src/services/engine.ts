@@ -29,18 +29,20 @@ export class IngestionService {
         const s = (signal || '').toUpperCase();
         switch (type) {
             case 'DRIFT':
-                if (s.includes('VOLATILE')) return 1.45;
-                if (s.includes('FLUX')) return 1.20;
-                if (s.includes('STABLE')) return 0.75;
+                if (s.includes('CRITICAL-ROTATION') || s.includes('INJURY-CRISIS')) return 1.65;
+                if (s.includes('VOLATILE') || s.includes('ATTACKING-SHIFT')) return 1.45;
+                if (s.includes('FLUX') || s.includes('TACTICAL-REBOOT')) return 1.20;
+                if (s.includes('STABLE') || s.includes('DEFENSIVE-LOCK')) return 0.65;
                 return 1.0;
             case 'SENTIMENT':
-                if (s.includes('BULLISH')) return 0.15; // Positive market pressure
-                if (s.includes('BEARISH')) return -0.15; // Negative market pressure
+                if (s.includes('BULLISH') || s.includes('OVER-BET')) return 0.22;
+                if (s.includes('BEARISH') || s.includes('UNDER-VALUED')) return -0.22;
                 return 0;
             case 'STAKES':
-                if (s.includes('CRITICAL')) return 1.15; // High pressure increases intensity
+                if (s.includes('KNOCKOUT') || s.includes('RELEGATION-BATTLE')) return 1.25;
+                if (s.includes('CRITICAL') || s.includes('DERBY')) return 1.15;
                 if (s.includes('STANDARD')) return 1.0;
-                if (s.includes('DEAD-HEAT')) return 0.85; // Lower intensity
+                if (s.includes('DEAD-RUBBER') || s.includes('FRIENDLY')) return 0.75;
                 return 1.0;
             default:
                 return 1.0;
@@ -60,11 +62,15 @@ export class IngestionService {
     const baselineXG = this.clamp(this.clean(team.avgXG), 0, 5.0);
     
     // 2. Data Harmonization
-    const aiWeight = this.clamp(reliability * 0.9, 0.4, 0.9);
+    const aiWeight = this.clamp(reliability * 0.95, 0.45, 0.95);
     const baselineWeight = 1 - aiWeight;
     
+    // Factor in AI suggested baseline if available
+    const suggestedBaseline = this.clamp(this.clean(matrix?.aiScoringBaseline), 0.5, 4.5);
+    const effectiveBaselineXG = suggestedBaseline > 0.5 ? (baselineXG * 0.3 + suggestedBaseline * 0.7) : baselineXG;
+
     const aiSignal = (rawNPXG * adjA + rawXT * (1 - adjA));
-    let finalizedExpectancy = (aiSignal * aiWeight) + (baselineXG * baselineWeight);
+    let finalizedExpectancy = (aiSignal * aiWeight) + (effectiveBaselineXG * baselineWeight);
 
     // 3. Volatility Analysis
     const sterilizeArray = (arr: any[], limit: number = 5) => {
@@ -186,17 +192,18 @@ export const calculateMatchExpectancy = (
     let homeParam = ((runEstimation(home, homeNoise) || 1.35) / leagueAvg) + marketAdj;
     let awayParam = ((runEstimation(away, awayNoise) || 1.35) / leagueAvg) - marketAdj;
 
-    // Numerical optimization: Weighted Moving Average with Learning Rate
-        const learningRate = 0.15;
-        for (let i = 0; i < 20; i++) {
-            const homeTarget = (home.npxG / leagueAvg);
-            const awayTarget = (away.npxG / leagueAvg);
-            homeParam += (homeTarget - homeParam) * learningRate;
-            awayParam += (awayTarget - awayParam) * learningRate;
-            
-            // Convergence check
-            if (Math.abs(homeTarget - homeParam) < 1e-4 && Math.abs(awayTarget - awayParam) < 1e-4) break;
-        }
+    // Numerical optimization: Adaptive Weighted Moving Average
+    const avgPurity = ((home.dataPurity || 0.8) + (away.dataPurity || 0.8)) / 2;
+    const learningRate = 0.32 + (avgPurity * 0.1); 
+    for (let i = 0; i < 20; i++) {
+        const homeTarget = (home.npxG / leagueAvg);
+        const awayTarget = (away.npxG / leagueAvg);
+        const prevHome = homeParam;
+        homeParam += (homeTarget - homeParam) * learningRate;
+        awayParam += (awayTarget - awayParam) * learningRate;
+        
+        if (Math.abs(prevHome - homeParam) < 1e-5) break;
+    }
 
     const homeLambda = Math.max(0.1, Math.min(6.5, homeParam * leagueAvg));
     const awayMu = Math.max(0.1, Math.min(6.5, awayParam * leagueAvg));
@@ -206,7 +213,7 @@ export const calculateMatchExpectancy = (
     return { homeScoring: homeLambda, awayScoring: awayMu, dependence };
 };
 
-export const calculateProbability = (hScoring: number, aScoring: number, dependence: number, phases: TacticalPhase[]) => {
+export const calculateProbability = (hScoring: number, aScoring: number, dependence: number, phases: TacticalPhase[], context?: MatchContext) => {
     // Log-space Factorial to prevent overflow
     const logFactorial = (n: number): number => {
         let res = 0;
@@ -220,7 +227,6 @@ export const calculateProbability = (hScoring: number, aScoring: number, depende
     };
 
     const getAdj = (x: number, y: number, hL: number, aL: number, d: number) => {
-        // Dixon-Coles Tau adjustment (Simplified)
         if (x === 0 && y === 0) return 1 - (hL * aL * d);
         if (x === 1 && y === 0) return 1 + (aL * d);
         if (x === 0 && y === 1) return 1 + (hL * d);
@@ -228,25 +234,95 @@ export const calculateProbability = (hScoring: number, aScoring: number, depende
         return 1;
     };
 
-    let pW = 0, pD = 0, pL = 0, total = 0, pOver15 = 0;
+    let pW = 0, pD = 0, pL = 0, total = 0;
+    let pOver15 = 0, pUnder35 = 0;
+
     for (let h = 0; h <= 10; h++) {
         for (let a = 0; a <= 10; a++) {
             const logP = logPoisson(h, hScoring) + logPoisson(a, aScoring);
             const p = Math.exp(logP) * getAdj(h, a, hScoring, aScoring, dependence);
-            if (h > a) pW += p; else if (h === a) pD += p; else pL += p;
+            
+            if (h > a) pW += p; 
+            else if (h === a) pD += p; 
+            else pL += p;
+
             if (h + a > 1.5) pOver15 += p;
+            if (h + a < 3.5) pUnder35 += p;
+            
             total += p;
         }
     }
 
-    // Advanced weight: normalize by total sum to ensure probability stays within [0,1]
-    const baseProb = pOver15 / Math.max(1e-6, total);
+    const norm = (val: number) => val / Math.max(1e-6, total);
     const chaos = phases.length > 0 ? phases.filter(p => p.state === 'HIGH_VARIANCE').length / phases.length : 0;
-    
-    // Final result incorporates high-variance tactical phases as a confidence modifier
-    const finalProb = baseProb + (baseProb * (chaos * 0.12));
+    const stability = phases.length > 0 ? phases.filter(p => p.state === 'CONSERVATIVE').length / phases.length : 0;
+    const avgIntensity = phases.length > 0 ? phases.reduce((sum, p) => sum + p.intensity, 0) / phases.length : 50;
 
-    return { probability: Math.round(Math.min(99, finalProb * 100)), homeXG: hScoring, awayXG: aScoring };
+    // --- DYNAMIC THRESHOLD CALIBRATION ---
+    const s = (context?.stakes || '').toUpperCase();
+    const d = (context?.tacticalDrift || '').toUpperCase();
+    
+    // Instead of binary thresholds, we use base values that are modified by context
+    const baseStatThreshold = s.includes('CRITICAL') ? 0.68 : 0.72;
+    const chaosWeight = d.includes('VOLATILE') ? 1.2 : 1.0;
+
+    const outcomes = [
+        { 
+            type: 'OVER_15', 
+            prob: norm(pOver15), 
+            label: 'Over 1.5',
+            signals: {
+                statistical: norm(pOver15) / (baseStatThreshold + 0.1),
+                tactical: Math.min(1.2, (chaos * chaosWeight) / (stability + 0.1)),
+                intensity: Math.min(1.2, avgIntensity / 80),
+                convergence: Math.min(1.2, (hScoring + aScoring) / 2.8)
+            }
+        },
+        { 
+            type: 'UNDER_35', 
+            prob: norm(pUnder35), 
+            label: 'Under 3.5',
+            signals: {
+                statistical: norm(pUnder35) / (baseStatThreshold + 0.1),
+                tactical: Math.min(1.2, (stability * 1.1) / (chaos + 0.1)),
+                intensity: Math.min(1.2, 45 / (avgIntensity + 1)),
+                convergence: Math.min(1.2, 2.0 / (hScoring + aScoring + 0.1))
+            }
+        }
+    ];
+
+    const strongest = outcomes.map(o => {
+        const signalStrength = (o.signals.statistical * 0.5) + 
+                              (o.signals.tactical * 0.15) + 
+                              (o.signals.intensity * 0.15) + 
+                              (o.signals.convergence * 0.2);
+
+        // Map signal strength to lock count
+        const lockCount = Math.min(4, Math.max(1, Math.floor(signalStrength * 2.8)));
+        
+        // Final Probability: 85% statistical/signal, 15% heuristic drift
+        let finalProb = (o.prob * 0.85) + (signalStrength * 0.15);
+        
+        return {
+            ...o,
+            lockCount,
+            isSureshot: signalStrength > 1.25 && finalProb > 0.88,
+            finalProb: Math.max(0.05, Math.min(0.99, finalProb))
+        };
+    }).reduce((prev, curr) => (prev.finalProb > curr.finalProb) ? prev : curr);
+
+    const isVoid = strongest.finalProb < 0.55;
+
+    return { 
+        probability: Math.round(strongest.finalProb * 100), 
+        predictionType: isVoid ? 'VOID' : strongest.type as any,
+        predictionLabel: isVoid ? 'NO CLEAR SIGNAL' : strongest.label,
+        homeXG: hScoring, 
+        awayXG: aScoring,
+        allOutcomes: outcomes,
+        lockCount: strongest.lockCount,
+        isSureshot: strongest.isSureshot && !isVoid
+    };
 };
 
 export const findTopTacticalPaths = (homeScoring: number, awayScoring: number): TacticalSequence[] => {
@@ -260,7 +336,7 @@ export const findTopTacticalPaths = (homeScoring: number, awayScoring: number): 
         'HIGH_VARIANCE': { 'CONSERVATIVE': 0.0, 'DOMINANT': 0.1, 'TRANSITIONAL': 0.3, 'HIGH_VARIANCE': 0.6 }
     };
 
-    const baseIntensity = (homeScoring + awayScoring) * 35;
+    const baseIntensity = Math.min(95, (homeScoring + awayScoring) * 32);
     
     const pdf = (x: number, mean: number, stdDev: number) => {
         const exponent = -Math.pow(x - mean, 2) / (2 * Math.pow(stdDev, 2));
@@ -268,7 +344,8 @@ export const findTopTacticalPaths = (homeScoring: number, awayScoring: number): 
     };
 
     const getEmission = (state: TacticalPhase['state'], timeStep: number) => {
-        const obs = Math.max(0, Math.min(100, baseIntensity + Math.sin(timeStep * 0.5) * 8));
+        const drift = Math.sin(timeStep * 0.4) * 5;
+        const obs = Math.max(0, Math.min(100, baseIntensity + drift));
         
         switch (state) {
             case 'CONSERVATIVE': return pdf(obs, 35, 12) * 10;

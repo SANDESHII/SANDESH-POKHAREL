@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { performAnalysis } from "./geminiService";
+import { BacktestService } from "./src/services/backtestService";
 
 async function startServer() {
   const app = express();
@@ -23,10 +24,24 @@ async function startServer() {
     }
   });
 
+  // Backtest Endpoint
+  app.get("/api/backtest", async (_, res) => {
+    try {
+      const results = await BacktestService.runBacktest();
+      res.json(results);
+    } catch (error: any) {
+      console.error("[SERVER] Backtest Error:", error);
+      res.status(500).json({ error: "Backtest Execution Failed" });
+    }
+  });
+
   // Vite Integration
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        hmr: false 
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);

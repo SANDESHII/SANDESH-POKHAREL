@@ -10,19 +10,19 @@ interface MatchVisualizerProps {
 
 export const MatchVisualizer: React.FC<MatchVisualizerProps> = ({ path, isOver = true }) => {
     const containerClasses = isOver 
-        ? "space-y-6 bg-emerald-950/20 p-6 rounded-2xl border border-emerald-900/30"
-        : "space-y-6 bg-blue-950/20 p-6 rounded-2xl border border-blue-900/30";
+        ? "space-y-6 bg-blue-950/20 p-6 rounded-2xl border border-blue-900/30"
+        : "space-y-6 bg-emerald-950/20 p-6 rounded-2xl border border-emerald-900/30";
     
     const labelClasses = isOver 
-        ? "flex items-center justify-between text-[10px] uppercase font-black tracking-[0.2em] text-emerald-900"
-        : "flex items-center justify-between text-[10px] uppercase font-black tracking-[0.2em] text-blue-900";
+        ? "flex items-center justify-between text-[10px] uppercase font-black tracking-[0.2em] text-blue-900"
+        : "flex items-center justify-between text-[10px] uppercase font-black tracking-[0.2em] text-emerald-900";
 
     const getStateColor = (state: string) => {
         switch (state) {
             case 'HIGH_VARIANCE': return 'from-rose-600 to-orange-500';
-            case 'TRANSITIONAL': return isOver ? 'from-emerald-600 to-teal-500' : 'from-blue-600 to-cyan-500';
-            case 'DOMINANT': return isOver ? 'from-emerald-400 to-emerald-600' : 'from-blue-400 to-blue-600';
-            default: return isOver ? 'from-emerald-950 to-emerald-900' : 'from-blue-950 to-blue-900';
+            case 'TRANSITIONAL': return isOver ? 'from-blue-600 to-cyan-500' : 'from-emerald-600 to-teal-500';
+            case 'DOMINANT': return isOver ? 'from-blue-400 to-blue-600' : 'from-emerald-400 to-emerald-600';
+            default: return isOver ? 'from-blue-950 to-blue-900' : 'from-emerald-950 to-emerald-900';
         }
     };
 

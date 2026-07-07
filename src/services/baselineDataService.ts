@@ -45,5 +45,16 @@ export const getTeamBaseline = (teamName: string): TeamBaseline => {
     for (const key in HISTORICAL_BASELINES) {
         if (slug.includes(key) || key.includes(slug)) return HISTORICAL_BASELINES[key];
     }
-    return { npxG: 1.25, xT: 1.10, avgXG: 1.20, avgXGA: 1.25, cleanSheets: 6 };
+    
+    // Deterministic seed based on team name to avoid identical "Unknown" stats
+    const seed = teamName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const v = (val: number, range: number) => val + ((seed % 157) / 157 * range) - (range / 2);
+
+    return { 
+        npxG: Math.max(0.7, v(1.35, 0.9)), 
+        xT: Math.max(0.6, v(1.15, 0.7)), 
+        avgXG: Math.max(0.8, v(1.45, 1.0)), 
+        avgXGA: Math.max(0.7, v(1.35, 0.9)), 
+        cleanSheets: Math.max(1, Math.floor(v(6, 8))) 
+    };
 };

@@ -63,7 +63,9 @@ export interface AnalysisResult {
     minimumExpectancy: number;
     potentialCeiling: number;
     prediction?: string;
-    predictionType?: 'OVER' | 'UNDER' | 'BTTS' | 'WIN' | 'DRAW' | 'STABILITY';
+    predictionType?: 'OVER_15' | 'UNDER_35' | 'VOID';
+    lockCount: number;
+    isSureshot?: boolean;
     context: MatchContext;
     marketIndicators: {
         volume: string;
@@ -71,4 +73,11 @@ export interface AnalysisResult {
     };
     modelAudit: ModelAudit;
     surety?: AnalysisConfidence;
+    sources?: string[];
+    realTimeData?: {
+        homeLineup?: string[];
+        awayLineup?: string[];
+        tacticalShift?: string;
+        injuries?: string[];
+    };
 }

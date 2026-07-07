@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { motion } from 'motion/react';
-import { Shield, Target, CheckCircle2, Activity } from 'lucide-react';
+import { Target, Activity, Crown, Zap } from 'lucide-react';
 import { AnalysisResult } from '../../types';
 
 interface VerifiedPredictionProps {
@@ -12,60 +12,60 @@ export const VerifiedPrediction: React.FC<VerifiedPredictionProps> = ({ analysis
     const path = analysis.verifiedOptimalPath;
     if (!path) return null;
 
-    const hasSignal = analysis.probability >= 70;
-    const isOver15 = analysis.prediction?.includes('OVER 1.5');
-    const isUnder35 = analysis.prediction?.includes('UNDER 3.5');
+    const isQuadLock = analysis.isSureshot || analysis.lockCount === 4;
 
     let accentClass = 'text-zinc-500';
     let bgClass = 'bg-zinc-500/5';
     let borderClass = 'border-zinc-500/20';
-    let iconBgClass = 'bg-zinc-500/20';
+    let iconBgClass = 'bg-zinc-500/10';
     let iconBorderClass = 'border-zinc-500/30';
     let badgeClass = 'bg-zinc-500/10 border-zinc-500/20 text-zinc-500';
 
-    if (hasSignal) {
-        if (isOver15) {
-            accentClass = 'text-emerald-500';
-            bgClass = 'bg-emerald-500/5';
-            borderClass = 'border-emerald-500/20';
-            iconBgClass = 'bg-emerald-500/20';
-            iconBorderClass = 'border-emerald-500/30';
-            badgeClass = 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500';
-        } else if (isUnder35) {
-            accentClass = 'text-blue-500';
-            bgClass = 'bg-blue-500/5';
-            borderClass = 'border-blue-500/20';
-            iconBgClass = 'bg-blue-500/20';
-            iconBorderClass = 'border-blue-500/30';
-            badgeClass = 'bg-blue-500/10 border-blue-500/20 text-blue-500';
-        }
+    const isOver15 = analysis.predictionType === 'OVER_15';
+
+    if (isQuadLock) {
+        accentClass = 'text-cyan-400';
+        bgClass = 'bg-cyan-500/5';
+        borderClass = 'border-cyan-500/30';
+        iconBgClass = 'bg-cyan-500/20';
+        iconBorderClass = 'border-cyan-500/40';
+        badgeClass = 'bg-cyan-500/20 border-cyan-500/30 text-cyan-400';
+    } else if (isOver15) {
+        accentClass = 'text-blue-400';
+        bgClass = 'bg-blue-500/10';
+        borderClass = 'border-blue-500/50';
+        iconBgClass = 'bg-blue-500/20';
+        iconBorderClass = 'border-blue-500/40';
+        badgeClass = 'bg-blue-500/20 border-blue-500/30 text-blue-400';
     }
 
-    const Icon = isOver15 ? Shield : Target;
+    const Icon = isQuadLock ? Crown : (isOver15 ? Zap : Target);
 
     return (
         <motion.div 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`${bgClass} ${borderClass} rounded-2xl p-8 space-y-6 relative overflow-hidden group mb-10 shadow-2xl`}
+            className={`${bgClass} ${borderClass} border rounded-2xl p-8 space-y-6 relative overflow-hidden group mb-10 shadow-2xl ${isQuadLock || isOver15 ? `ring-1 ${isQuadLock ? 'ring-cyan-500/20' : 'ring-blue-500/20'}` : ''}`}
         >
             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                {isOver15 ? <CheckCircle2 className={`w-24 h-24 ${accentClass}`} /> : <Activity className={`w-24 h-24 ${accentClass}`} />}
+                {isQuadLock ? <Crown className={`w-24 h-24 ${accentClass}`} /> : (isOver15 ? <Zap className={`w-24 h-24 ${accentClass}`} /> : <Activity className={`w-24 h-24 ${accentClass}`} />)}
             </div>
             
             <div className="flex items-center gap-4">
                 <div className={`w-12 h-12 rounded-full ${iconBgClass} flex items-center justify-center border ${iconBorderClass}`}>
-                    <Icon className={`w-6 h-6 ${accentClass}`} />
+                    <Icon className={`w-6 h-6 ${accentClass} ${isQuadLock || isOver15 ? 'animate-pulse' : ''}`} />
                 </div>
                 <div>
                     <div className="flex items-center gap-2">
-                        <h3 className={`text-[10px] font-black ${accentClass} uppercase tracking-[0.3em]`}>Quant Prediction</h3>
+                        <h3 className={`text-[10px] font-black ${accentClass} uppercase tracking-[0.3em]`}>
+                            {isQuadLock ? 'ABSOLUTE ZERO SIGNAL' : (isOver15 ? 'OVER 1.5 SIGNAL' : 'Quant Prediction')}
+                        </h3>
                         <span className={`px-2 py-0.5 ${badgeClass} rounded text-[8px] font-black uppercase tracking-widest`}>
-                            {hasSignal ? 'OPTIMAL' : 'LOW_CONFIDENCE'}
+                            {isQuadLock ? 'SURESHOT' : (isOver15 ? 'HIGH CONVERGENCE' : 'PRE-VERIFICATION')}
                         </span>
                     </div>
                     <p className="text-3xl font-black text-white tracking-tight uppercase">
-                        {hasSignal ? analysis.prediction : "RETRY_ANALYSIS"}
+                        {isQuadLock ? analysis.prediction : (analysis.predictionType === 'VOID' ? "NO CLEAR SIGNAL" : analysis.prediction)}
                     </p>
                 </div>
             </div>

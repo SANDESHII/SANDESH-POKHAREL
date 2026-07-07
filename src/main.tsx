@@ -6,6 +6,7 @@ import { motion } from 'motion/react';
 import { Activity, Info } from 'lucide-react';
 import { AnalysisResult } from './types';
 import { ResultGrid } from './components/ResultDisplay';
+import { BacktestDisplay } from './components/BacktestDisplay';
 
 // Components
 const Header: React.FC = () => (
@@ -232,6 +233,10 @@ const App: React.FC = () => {
                         />
                     </motion.div>
                 )}
+
+                <section className="pt-24 border-t border-white/5">
+                    <BacktestDisplay />
+                </section>
             </main>
 
             <footer className="max-w-7xl mx-auto px-6 py-16 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-8 text-zinc-800">
