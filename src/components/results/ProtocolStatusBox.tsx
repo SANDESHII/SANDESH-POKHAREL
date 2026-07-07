@@ -69,6 +69,12 @@ export const ProtocolStatusBox: React.FC<ProtocolStatusBoxProps> = ({ analysis }
                                     className={`h-full ${isQuadLock ? 'bg-cyan-500 shadow-[0_0_10px_rgba(34,211,238,0.5)]' : 'bg-zinc-700'}`}
                                 />
                             </div>
+                            {analysis.modelAudit.signalPurity < 0.4 && (
+                                <div className="mt-3 flex items-center gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-lg">
+                                    <Shield className="w-3 h-3 text-red-500" />
+                                    <span className="text-[8px] font-black text-red-500 uppercase tracking-widest">Warning: Heuristic Data Fallback Active</span>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

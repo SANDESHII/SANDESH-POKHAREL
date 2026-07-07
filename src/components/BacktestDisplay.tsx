@@ -49,10 +49,11 @@ export const BacktestDisplay: React.FC = () => {
                     <motion.div 
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="grid grid-cols-1 md:grid-cols-3 gap-6"
+                        className="grid grid-cols-1 md:grid-cols-4 gap-6"
                     >
                         {[
                             { label: 'Samples Analyzed', value: summary.totalMatches, icon: Activity },
+                            { label: 'Brier Score', value: summary.brierScore.toFixed(4), icon: BarChart3, detail: 'Lower is better' },
                             { label: 'Avg. Confidence', value: `${summary.averageConfidence.toFixed(1)}%`, icon: BarChart3 },
                             { label: 'Signal Accuracy', value: `${((summary.over15Accuracy + summary.under35Accuracy) / 2).toFixed(1)}%`, icon: CheckCircle2 }
                         ].map((stat, i) => (
@@ -61,11 +62,34 @@ export const BacktestDisplay: React.FC = () => {
                                 <div className="space-y-1">
                                     <span className="text-[8px] font-black uppercase text-zinc-600 tracking-widest block">{stat.label}</span>
                                     <p className="text-3xl font-black text-white">{stat.value}</p>
+                                    {stat.detail && <span className="text-[8px] text-zinc-700 font-bold uppercase tracking-tight">{stat.detail}</span>}
                                 </div>
                             </div>
                         ))}
 
-                        <div className="md:col-span-3 overflow-hidden border border-zinc-900 rounded-2xl bg-zinc-950">
+                        <div className="md:col-span-4 p-6 bg-zinc-950 border border-zinc-900 rounded-2xl">
+                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-6">Reliability Calibration</h4>
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                                {summary.calibrationBins.map((bin, i) => (
+                                    <div key={i} className="space-y-2 p-3 bg-zinc-900/50 rounded-lg border border-zinc-900">
+                                        <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">{bin.bin}</span>
+                                        <div className="flex items-baseline justify-between">
+                                            <span className="text-lg font-black text-white">{(bin.hitRate * 100).toFixed(0)}%</span>
+                                            <span className="text-[8px] text-zinc-600 font-bold">N={bin.n}</span>
+                                        </div>
+                                        <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
+                                            <div 
+                                                className="h-full bg-emerald-500/50 transition-all duration-1000" 
+                                                style={{ width: `${bin.hitRate * 100}%` }}
+                                            />
+                                        </div>
+                                        <span className="text-[7px] text-zinc-700 font-bold uppercase tracking-tighter block">Expected: {(bin.expected * 100).toFixed(0)}%</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="md:col-span-4 overflow-hidden border border-zinc-900 rounded-2xl bg-zinc-950">
                             <table className="w-full text-left">
                                 <thead className="bg-zinc-900/50">
                                     <tr>

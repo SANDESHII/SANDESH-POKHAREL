@@ -209,6 +209,34 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                                 <span className="text-[8px] uppercase font-black opacity-30 block">Drift</span>
                                 <p className="text-[10px] font-bold text-zinc-100 uppercase leading-relaxed">{analysis.context.tacticalDrift || "STABLE"}</p>
                             </div>
+                            <div className="space-y-2 p-3 bg-black/40 border border-zinc-900 rounded-lg">
+                                <span className="text-[8px] uppercase font-black opacity-30 block">Data Purity</span>
+                                <div className="flex items-center gap-2">
+                                    <div className="flex-1 h-1 bg-zinc-900 rounded-full overflow-hidden">
+                                        <div 
+                                            className={`h-full ${analysis.modelAudit.signalPurity > 0.8 ? 'bg-emerald-500' : (analysis.modelAudit.signalPurity > 0.5 ? 'bg-amber-500' : 'bg-red-500')}`}
+                                            style={{ width: `${analysis.modelAudit.signalPurity * 100}%` }}
+                                        />
+                                    </div>
+                                    <span className={`text-[10px] font-mono font-bold ${analysis.modelAudit.signalPurity > 0.8 ? 'text-emerald-500' : (analysis.modelAudit.signalPurity > 0.5 ? 'text-amber-500' : 'text-red-500')}`}>
+                                        {(analysis.modelAudit.signalPurity * 100).toFixed(0)}%
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="space-y-2 p-3 bg-black/40 border border-zinc-900 rounded-lg">
+                                <span className="text-[8px] uppercase font-black opacity-30 block">Signal Strength</span>
+                                <div className="flex items-center gap-2">
+                                    <div className="flex-1 h-1 bg-zinc-900 rounded-full overflow-hidden">
+                                        <div 
+                                            className={`h-full ${analysis.modelAudit.signalStrength > 0.8 ? 'bg-cyan-500' : (analysis.modelAudit.signalStrength > 0.5 ? 'bg-indigo-500' : 'bg-zinc-700')}`}
+                                            style={{ width: `${analysis.modelAudit.signalStrength * 100}%` }}
+                                        />
+                                    </div>
+                                    <span className={`text-[10px] font-mono font-bold ${analysis.modelAudit.signalStrength > 0.8 ? 'text-cyan-500' : (analysis.modelAudit.signalStrength > 0.5 ? 'text-indigo-500' : 'text-zinc-500')}`}>
+                                        {(analysis.modelAudit.signalStrength * 100).toFixed(0)}%
+                                    </span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

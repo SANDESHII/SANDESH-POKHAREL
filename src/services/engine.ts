@@ -1,5 +1,5 @@
 
-import { TeamStats, TacticalPhase, TacticalSequence, AnalysisConfidence, ModelAudit, MatchContext } from '../types';
+import { TeamStats, TacticalPhase, TacticalSequence, AnalysisConfidence, MatchContext } from '../types';
 
 // --- INGESTION LOGIC ---
 
@@ -99,9 +99,10 @@ export class IngestionService {
     }
 
     // 5. Stability Metrics
+    const basePurity = team.purity || 0.85; 
     const shift = Math.abs(finalizedExpectancy - baselineXG);
     const calibrationStability = this.clamp(1 - (shift * 1.5) - ((1 - reliability) * 0.15), 0.1, 1.0);
-    const dataPurity = this.clamp(signalFidelity - (shift * 0.2), 0.1, 1.0);
+    const dataPurity = this.clamp((signalFidelity * basePurity) - (shift * 0.2), 0.1, 1.0);
 
         return {
             name: String(team.name || "Unknown"),
@@ -126,33 +127,223 @@ export class IngestionService {
 
 // --- SIGNAL FILTERING ---
 
+export interface TeamState {
+    id: string;
+    estimatedNpxG: number;
+    uncertainty: number;
+    elo: number; // Independent secondary rating
+    lastUpdate: string;
+}
+
+export interface MatchResult {
+    homeTeam: string;
+    awayTeam: string;
+    homeGoals: number;
+    awayGoals: number;
+    date: string;
+}
+
+export interface LeagueState {
+    rho: number;
+    homeAdvantage: number;
+    lastFitted: string;
+}
+
+/**
+ * RECURSIVE STATE STORE
+ * Persists team-level strength estimates and uncertainty across matches.
+ */
+export class StateStore {
+    private static states: Map<string, TeamState> = new Map();
+
+    static get(teamName: string): TeamState | null {
+        return this.states.get(teamName) || null;
+    }
+
+    static set(state: TeamState) {
+        this.states.set(state.id, state);
+    }
+    
+    static reset() {
+        this.states.clear();
+    }
+    
+    /**
+     * RECURSIVE STATE UPDATE
+     * Called AFTER a match is played to update the team's latent state.
+     */
+    static updateStateAfterMatch(teamName: string, actualGoals: number, actualConceded: number, date: string) {
+        const existing = StateStore.get(teamName);
+        if (!existing) return;
+
+        const lastDate = new Date(existing.lastUpdate);
+        const currentDate = new Date(date);
+        const daysSince = Math.max(0.5, (currentDate.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+
+        const filter = new SignalFilter(existing.estimatedNpxG, existing.uncertainty);
+        
+        // Measurement is the actual goals, with a higher noise (since goals are noisier than xG)
+        const measurementNoise = 0.8; 
+        const update = filter.update(actualGoals, measurementNoise, 0.05, 1.0, daysSince);
+
+        // Update Elo based on goal difference
+        const goalDiff = actualGoals - actualConceded;
+        const eloChange = goalDiff * 20; 
+
+        StateStore.set({
+            ...existing,
+            estimatedNpxG: update.state,
+            uncertainty: update.uncertainty,
+            elo: existing.elo + eloChange,
+            lastUpdate: date
+        });
+    }
+}
+
+/**
+ * LEAGUE PARAMETER STORE
+ * Persists MLE-fitted league constants like Dixon-Coles rho and home advantage.
+ */
+export class LeagueStateStore {
+    private static state: LeagueState = {
+        rho: 0.08, // Initial principled prior
+        homeAdvantage: 0.25, // Average PL home boost in xG terms
+        lastFitted: new Date().toISOString()
+    };
+
+    static get() { return this.state; }
+    static set(state: LeagueState) { this.state = state; }
+}
+
+/**
+ * DIXON-COLES MLE OPTIMIZER
+ * Calibrates the model parameters against historical match results.
+ */
+export class DixonColesOptimizer {
+    /**
+     * Newton-Raphson step for rho (dependency parameter).
+     * Maximizes log-likelihood tau(x, y | lambda, mu, rho).
+     */
+    static calibrateRho(results: { hG: number; aG: number; hExp: number; aExp: number }[]): number {
+        let rho = LeagueStateStore.get().rho;
+        const iterations = 8;
+        
+        for (let i = 0; i < iterations; i++) {
+            let firstDeriv = 0;
+            let secondDeriv = 0;
+
+            for (const m of results) {
+                const { hG: x, aG: y, hExp: h, aExp: a } = m;
+                let d = 0, hss = 0;
+
+                // Dixon-Coles Tau Adjustment Derivatives
+                if (x === 0 && y === 0) {
+                    const val = 1 - h * a * rho;
+                    d = -h * a / val;
+                    hss = -(h * h * a * a) / (val * val);
+                } else if (x === 0 && y === 1) {
+                    const val = 1 + h * rho;
+                    d = h / val;
+                    hss = -(h * h) / (val * val);
+                } else if (x === 1 && y === 0) {
+                    const val = 1 + a * rho;
+                    d = a / val;
+                    hss = -(a * a) / (val * val);
+                } else if (x === 1 && y === 1) {
+                    const val = 1 - rho;
+                    d = -1 / val;
+                    hss = -1 / (val * val);
+                }
+
+                firstDeriv += d;
+                secondDeriv += hss;
+            }
+
+            if (Math.abs(secondDeriv) < 1e-10) break;
+            const step = firstDeriv / secondDeriv;
+            rho -= step;
+            rho = Math.max(-0.25, Math.min(0.25, rho)); // Constraint boundaries
+            if (Math.abs(step) < 1e-6) break;
+        }
+        return rho;
+    }
+
+    /**
+     * Coordinate-wise MLE for Home Advantage (gamma).
+     */
+    static calibrateHomeAdvantage(results: { hG: number; hExp: number }[]): number {
+        let gamma = LeagueStateStore.get().homeAdvantage;
+        const iterations = 5;
+
+        for (let i = 0; i < iterations; i++) {
+            let firstDeriv = 0;
+            let secondDeriv = 0;
+
+            for (const m of results) {
+                // For Poisson lambda = base * exp(gamma)
+                // dL/dgamma = x - lambda
+                // d2L/dgamma2 = -lambda
+                const lambda = m.hExp * Math.exp(gamma);
+                firstDeriv += (m.hG - lambda);
+                secondDeriv -= lambda;
+            }
+
+            if (Math.abs(secondDeriv) < 1e-10) break;
+            const step = firstDeriv / secondDeriv;
+            gamma -= step;
+            if (Math.abs(step) < 1e-5) break;
+        }
+        return gamma;
+    }
+}
+
 class SignalFilter {
     private state: number;
     private uncertainty: number;
     private gain: number = 0.5;
 
-    constructor(initialState: number) {
+    constructor(initialState: number, initialUncertainty: number = 1.0) {
         this.state = initialState;
-        this.uncertainty = 1.0; // Initial state uncertainty
+        this.uncertainty = initialUncertainty;
     }
 
-    update(measurement: number, dataNoise: number, stateDrift: number, driftCoefficient: number = 1.0): number {
-        const adjustedDrift = Math.max(0.01, stateDrift * driftCoefficient);
-        this.uncertainty = this.uncertainty + adjustedDrift;
+    /**
+     * RECURSIVE UPDATE
+     * @param measurement Current match npxG
+     * @param dataNoise Measurement Noise (R) - linked to reliability
+     * @param baseDrift Process Noise (Q) - base drift per 7 days
+     * @param driftCoefficient Tactical drift multiplier
+     * @param daysSinceLast Time-aware decay for uncertainty
+     */
+    update(
+        measurement: number, 
+        dataNoise: number, 
+        baseDrift: number, 
+        driftCoefficient: number, 
+        daysSinceLast: number = 7
+    ): { state: number; uncertainty: number } {
+        // 1. Prediction Step: Grow uncertainty (Q) based on time elapsed
+        const processNoise = baseDrift * (daysSinceLast / 7) * driftCoefficient;
+        this.uncertainty = this.uncertainty + processNoise;
         
+        // 2. Innovation Step
         const innovation = measurement - this.state;
         const innovationCovariance = this.uncertainty + dataNoise;
         
+        // 3. Kalman Gain calculation with outlier gating
         const zScoreSq = (innovation * innovation) / Math.max(1e-6, innovationCovariance);
-        const gatingMultiplier = zScoreSq > 9 ? 0.4 : 1.0; 
+        const gatingMultiplier = zScoreSq > 9 ? 0.35 : 1.0; 
 
         this.gain = (this.uncertainty / Math.max(1e-9, innovationCovariance)) * gatingMultiplier;
+        
+        // 4. Update Step (State)
         this.state = this.state + this.gain * innovation;
         
+        // 5. Update Step (Uncertainty) - Joseph Form for stability
         const common = (1 - this.gain);
         this.uncertainty = (common * this.uncertainty * common) + (this.gain * dataNoise * this.gain);
         
-        return this.state;
+        return { state: this.state, uncertainty: this.uncertainty };
     }
 }
 
@@ -181,39 +372,83 @@ export const calculateMatchExpectancy = (
     const homeNoise = calculateNoise(home);
     const awayNoise = calculateNoise(away);
 
+    const league = LeagueStateStore.get();
     const leagueAvg = 1.35;
     
-    // 2. Adaptive Estimation with Alpha Signals
+    let totalUncertainty = 0;
+
+    // 2. Adaptive Recursive Estimation
     const runEstimation = (team: TeamStats, noise: number) => {
-        const filter = new SignalFilter(team.avgXG || 1.35);
-        return filter.update(team.npxG || 1.35, noise, 0.05, driftCoeff);
+        const existing = StateStore.get(team.name);
+        
+        // 2a. Principled Initialization
+        const initialState = existing ? existing.estimatedNpxG : (team.avgXG || 1.35);
+        const initialP = existing ? existing.uncertainty : 1.2;
+        const initialElo = existing ? existing.elo : 1500;
+        const lastDate = existing ? new Date(existing.lastUpdate) : new Date(Date.now() - 7 * 86400000);
+        
+        const matchDate = context?.date ? new Date(context.date) : new Date();
+        const daysSince = Math.max(0.5, (matchDate.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+        
+        // 2b. Kalman Execution
+        const filter = new SignalFilter(initialState, initialP);
+        const update = filter.update(team.npxG || 1.35, noise, 0.05, driftCoeff, daysSince);
+        
+        totalUncertainty += update.uncertainty;
+
+        // 2c. Simple Elo Update (Secondary Independent Method)
+        // This acts as the "Second Opinion" for Lock 4
+        const eloChange = ((team.npxG - (team.avgXGA || 1.35)) * 15);
+        const updatedElo = initialElo + eloChange;
+
+        // 2d. Sequential Persistence
+        StateStore.set({
+            id: team.name,
+            estimatedNpxG: update.state,
+            uncertainty: update.uncertainty,
+            elo: updatedElo,
+            lastUpdate: matchDate.toISOString()
+        });
+        
+        return { state: update.state, elo: updatedElo };
     };
 
-    let homeParam = ((runEstimation(home, homeNoise) || 1.35) / leagueAvg) + marketAdj;
-    let awayParam = ((runEstimation(away, awayNoise) || 1.35) / leagueAvg) - marketAdj;
+    const hResult = runEstimation(home, homeNoise);
+    const aResult = runEstimation(away, awayNoise);
 
-    // Numerical optimization: Adaptive Weighted Moving Average
-    const avgPurity = ((home.dataPurity || 0.8) + (away.dataPurity || 0.8)) / 2;
-    const learningRate = 0.32 + (avgPurity * 0.1); 
-    for (let i = 0; i < 20; i++) {
-        const homeTarget = (home.npxG / leagueAvg);
-        const awayTarget = (away.npxG / leagueAvg);
-        const prevHome = homeParam;
-        homeParam += (homeTarget - homeParam) * learningRate;
-        awayParam += (awayTarget - awayParam) * learningRate;
-        
-        if (Math.abs(prevHome - homeParam) < 1e-5) break;
-    }
+    const homeParam = (hResult.state / leagueAvg) + marketAdj;
+    const awayParam = (aResult.state / leagueAvg) - marketAdj;
 
-    const homeLambda = Math.max(0.1, Math.min(6.5, homeParam * leagueAvg));
+    // Apply Home Advantage (gamma) and league scaling
+    const homeLambda = Math.max(0.1, Math.min(6.5, homeParam * leagueAvg * Math.exp(league.homeAdvantage)));
     const awayMu = Math.max(0.1, Math.min(6.5, awayParam * leagueAvg));
 
-    const dependence = Math.min(0.1, Math.max(-0.25, (Math.tanh((home.avgXGA + away.avgXGA) / 5) * 0.1) - (Math.tanh(1 / (homeLambda + awayMu + 0.5)) * 0.35)));
+    // 3. Calibrated Dependency (Dixon-Coles rho)
+    const dependence = league.rho;
     
-    return { homeScoring: homeLambda, awayScoring: awayMu, dependence };
+    // 4. Independent Purity Score (Data Quality + State Stability)
+    const inputPurity = ((home.dataPurity || 0.8) + (away.dataPurity || 0.8)) / 2;
+    const stateStability = Math.max(0, 1 - (totalUncertainty / 2.5)); 
+    const finalizedPurity = (inputPurity * 0.6) + (stateStability * 0.4);
+
+    return { 
+        homeScoring: homeLambda, 
+        awayScoring: awayMu, 
+        dependence, 
+        purity: finalizedPurity,
+        eloDiff: hResult.elo - aResult.elo 
+    };
 };
 
-export const calculateProbability = (hScoring: number, aScoring: number, dependence: number, phases: TacticalPhase[], context?: MatchContext) => {
+export const calculateProbability = (
+    hScoring: number, 
+    aScoring: number, 
+    dependence: number, 
+    phases: TacticalPhase[], 
+    dataPurity: number, 
+    eloDiff: number,
+    context?: MatchContext
+) => {
     // Log-space Factorial to prevent overflow
     const logFactorial = (n: number): number => {
         let res = 0;
@@ -259,73 +494,101 @@ export const calculateProbability = (hScoring: number, aScoring: number, depende
     const avgIntensity = phases.length > 0 ? phases.reduce((sum, p) => sum + p.intensity, 0) / phases.length : 50;
 
     // --- DYNAMIC THRESHOLD CALIBRATION ---
-    const s = (context?.stakes || '').toUpperCase();
     const d = (context?.tacticalDrift || '').toUpperCase();
     
     // Instead of binary thresholds, we use base values that are modified by context
-    const baseStatThreshold = s.includes('CRITICAL') ? 0.68 : 0.72;
     const chaosWeight = d.includes('VOLATILE') ? 1.2 : 1.0;
 
     const outcomes = [
         { 
             type: 'OVER_15', 
             prob: norm(pOver15), 
+            baseline: 0.72,
             label: 'Over 1.5',
             signals: {
-                statistical: norm(pOver15) / (baseStatThreshold + 0.1),
-                tactical: Math.min(1.2, (chaos * chaosWeight) / (stability + 0.1)),
-                intensity: Math.min(1.2, avgIntensity / 80),
-                convergence: Math.min(1.2, (hScoring + aScoring) / 2.8)
+                statistical: Math.min(1.0, norm(pOver15) / 0.75),
+                tactical: Math.min(1.0, (chaos * chaosWeight) / (stability + 0.1)),
+                intensity: Math.min(1.0, avgIntensity / 100),
+                convergence: Math.min(1.0, (hScoring + aScoring) / 3.0)
             }
         },
         { 
             type: 'UNDER_35', 
             prob: norm(pUnder35), 
+            baseline: 0.76,
             label: 'Under 3.5',
             signals: {
-                statistical: norm(pUnder35) / (baseStatThreshold + 0.1),
-                tactical: Math.min(1.2, (stability * 1.1) / (chaos + 0.1)),
-                intensity: Math.min(1.2, 45 / (avgIntensity + 1)),
-                convergence: Math.min(1.2, 2.0 / (hScoring + aScoring + 0.1))
+                statistical: Math.min(1.0, norm(pUnder35) / 0.75),
+                tactical: Math.min(1.0, (stability * 1.1) / (chaos + 0.1)),
+                intensity: Math.min(1.0, 40 / (avgIntensity + 1)),
+                convergence: Math.min(1.0, 2.2 / (hScoring + aScoring + 0.1))
             }
         }
     ];
 
-    const strongest = outcomes.map(o => {
-        const signalStrength = (o.signals.statistical * 0.5) + 
-                              (o.signals.tactical * 0.15) + 
-                              (o.signals.intensity * 0.15) + 
+    const processed = outcomes.map(o => {
+        // Edge is the deviation from the league baseline
+        const edge = o.prob / o.baseline;
+        const signalStrength = (o.signals.statistical * 0.4) + 
+                              (o.signals.tactical * 0.2) + 
+                              (o.signals.intensity * 0.2) + 
                               (o.signals.convergence * 0.2);
-
-        // Map signal strength to lock count
-        const lockCount = Math.min(4, Math.max(1, Math.floor(signalStrength * 2.8)));
-        
-        // Final Probability: 85% statistical/signal, 15% heuristic drift
-        let finalProb = (o.prob * 0.85) + (signalStrength * 0.15);
         
         return {
             ...o,
-            lockCount,
-            isSureshot: signalStrength > 1.25 && finalProb > 0.88,
-            finalProb: Math.max(0.05, Math.min(0.99, finalProb))
+            edge,
+            signalStrength,
+            finalProb: o.prob 
         };
-    }).reduce((prev, curr) => (prev.finalProb > curr.finalProb) ? prev : curr);
+    });
 
-    const isVoid = strongest.finalProb < 0.55;
+    // Corridor Detection: Are both O1.5 and U3.5 showing positive edge?
+    const oEdge = processed[0].edge;
+    const uEdge = processed[1].edge;
+    const isCorridor = oEdge > 1.05 && uEdge > 1.05;
+
+    // Selection: Pick the outcome with the highest statistical Edge
+    const strongest = processed.reduce((prev, curr) => (prev.edge > curr.edge) ? prev : curr);
+
+    // --- NUCLEAR FORTRESS PROTOCOL (INDEPENDENT LOCKS) ---
+    const viterbi = findTopTacticalPaths(hScoring, aScoring, context)[0];
+    
+    const lock1 = strongest.prob > 0.72; // Statistical Lock
+    const lock2 = viterbi.likelihood > 0.82; // Convergence Lock (Independent of score)
+    const lock3 = dataPurity > 0.82; // Data Quality Lock
+    
+    // Lock 4: Independent Elo Agreement (Second Opinion)
+    const homeAdvantageAdjustedElo = eloDiff + 40;
+    const eloAgreement = (strongest.type === 'OVER_15') 
+        ? homeAdvantageAdjustedElo > -50 // Over 1.5 likely if not extreme mismatch
+        : (strongest.type === 'UNDER_35') 
+            ? Math.abs(homeAdvantageAdjustedElo) < 160 // Under 3.5 likely in balanced matches
+            : true;
+    const lock4 = eloAgreement;
+
+    const lockCount = [lock1, lock2, lock3, lock4].filter(Boolean).length;
+    const isVoid = strongest.finalProb < 0.55 || lockCount < 1;
+
+    let displayLabel = isVoid ? 'NO CLEAR SIGNAL' : strongest.label;
+    if (!isVoid && isCorridor) {
+        displayLabel = `STABLE CORRIDOR (2-3)`;
+    }
 
     return { 
         probability: Math.round(strongest.finalProb * 100), 
         predictionType: isVoid ? 'VOID' : strongest.type as any,
-        predictionLabel: isVoid ? 'NO CLEAR SIGNAL' : strongest.label,
+        predictionLabel: displayLabel,
         homeXG: hScoring, 
         awayXG: aScoring,
         allOutcomes: outcomes,
-        lockCount: strongest.lockCount,
-        isSureshot: strongest.isSureshot && !isVoid
+        lockCount,
+        signalStrength: strongest.signalStrength,
+        purity: Math.round(dataPurity * 100),
+        isSureshot: strongest.finalProb > 0.82 && strongest.signalStrength > 0.80 && lockCount >= 3 && !isVoid
     };
 };
 
-export const findTopTacticalPaths = (homeScoring: number, awayScoring: number): TacticalSequence[] => {
+export const findTopTacticalPaths = (_homeScoring: number, _awayScoring: number, context?: MatchContext): TacticalSequence[] => {
     const states: TacticalPhase['state'][] = ['CONSERVATIVE', 'DOMINANT', 'TRANSITIONAL', 'HIGH_VARIANCE'];
     const T = 10;
     
@@ -336,7 +599,10 @@ export const findTopTacticalPaths = (homeScoring: number, awayScoring: number): 
         'HIGH_VARIANCE': { 'CONSERVATIVE': 0.0, 'DOMINANT': 0.1, 'TRANSITIONAL': 0.3, 'HIGH_VARIANCE': 0.6 }
     };
 
-    const baseIntensity = Math.min(95, (homeScoring + awayScoring) * 32);
+    // DRIFT influence on base intensity (Independent of direct Poisson output)
+    const driftCoeff = context?.tacticalDrift?.includes('VOLATILE') ? 1.4 : 1.0;
+    const stakeCoeff = context?.stakes?.includes('CRITICAL') ? 1.2 : 1.0;
+    const baseIntensity = Math.min(95, 45 * driftCoeff * stakeCoeff); 
     
     const pdf = (x: number, mean: number, stdDev: number) => {
         const exponent = -Math.pow(x - mean, 2) / (2 * Math.pow(stdDev, 2));
@@ -348,17 +614,18 @@ export const findTopTacticalPaths = (homeScoring: number, awayScoring: number): 
         const obs = Math.max(0, Math.min(100, baseIntensity + drift));
         
         switch (state) {
-            case 'CONSERVATIVE': return pdf(obs, 35, 12) * 10;
-            case 'DOMINANT':     return pdf(obs, 52, 10) * 10;
-            case 'TRANSITIONAL': return pdf(obs, 72, 12) * 10;
-            case 'HIGH_VARIANCE': return pdf(obs, 90, 15) * 10;
-            default: return 0.01;
+            case 'CONSERVATIVE': return pdf(obs, 35, 12);
+            case 'DOMINANT':     return pdf(obs, 52, 10);
+            case 'TRANSITIONAL': return pdf(obs, 72, 12);
+            case 'HIGH_VARIANCE': return pdf(obs, 90, 15);
+            default: return 0.001;
         }
     };
 
     const runViterbi = (biasTransitions: typeof transitions, label: string): TacticalSequence => {
         const viterbi: number[][] = Array.from({ length: T }, () => Array(states.length).fill(-Infinity));
         const backpointer: number[][] = Array.from({ length: T }, () => Array(states.length).fill(0));
+        const margins: number[] = Array(T).fill(1.0);
 
         const logTransitions: Record<string, Record<string, number>> = {};
         states.forEach(s1 => {
@@ -385,6 +652,11 @@ export const findTopTacticalPaths = (homeScoring: number, awayScoring: number): 
                     }
                 }
             }
+            
+            // Calculate Margin Confidence for timestep T
+            const stepProbs = states.map((_, sIdx) => viterbi[t][sIdx]).sort((a, b) => b - a);
+            const margin = Math.exp(stepProbs[0] - stepProbs[1]);
+            margins[t] = Math.min(1.0, 0.4 + (Math.log(margin + 1) / 5));
         }
 
         let maxLogProb = -Infinity;
@@ -407,24 +679,28 @@ export const findTopTacticalPaths = (homeScoring: number, awayScoring: number): 
         
         const phases: TacticalPhase[] = pathIdx.map((idx, t) => {
             const state = states[idx];
-            const drift = 0.25 * (baseIntensity - currentIntensity); // Removed Math.random for stability
+            const drift = 0.25 * (baseIntensity - currentIntensity);
             currentIntensity += drift;
             const refinedIntensity = Math.max(20, Math.min(100, currentIntensity + Math.sin(t * 0.5) * 5));
             const emissionProb = getEmission(state, t);
-            const fitness = Math.min(1.0, 0.4 + (emissionProb * 0.8));
+            const fitness = Math.min(1.0, 0.4 + (emissionProb * 20)); // Adjusted scaling
             totalFitness += fitness;
 
             return {
                 state,
                 intensity: refinedIntensity,
-                confidence: 0.85
+                confidence: margins[t]
             };
         });
+
+        // Calibrated Convergence Score (More sensitive mapping)
+        const avgLogLikelihood = maxLogProb / T;
+        const normalizedLikelihood = Math.min(0.98, Math.max(0.4, (avgLogLikelihood + 18) / 15));
 
         return { 
             label, 
             phases, 
-            likelihood: Math.min(0.98, 0.75 + Math.exp(maxLogProb / T) * 5), 
+            likelihood: parseFloat(normalizedLikelihood.toFixed(3)), 
             accuracyScore: totalFitness / T
         };
     };
@@ -436,14 +712,23 @@ export const findTopTacticalPaths = (homeScoring: number, awayScoring: number): 
 
 export const calculateConfidenceAudit = (
     probability: number,
-    modelAudit: ModelAudit
+    convergence: number,
+    purity: number,
+    surety: number
 ): AnalysisConfidence => {
-    const score = (probability * 0.3) + (modelAudit.signalPurity * 50);
-    const verdict = score > 75 ? 'GOLD' : (score > 55 ? 'SILVER' : 'BRONZE');
+    // Each component contributes independently (Max 100)
+    const score = (probability * 0.25) + (convergence * 25) + (purity * 25) + (surety * 25);
+    const verdict = score > 82 ? 'GOLD' : (score > 65 ? 'SILVER' : (score > 45 ? 'BRONZE' : 'VOID'));
+    
+    const reasoning = [
+        `Convergence: ${(convergence * 100).toFixed(0)}% (Path Likelihood)`,
+        `Purity: ${(purity * 100).toFixed(0)}% (Data Quality)`,
+        `Surety: ${(surety * 100).toFixed(0)}% (Tactical Margin)`
+    ];
     
     return {
         confidenceScore: Math.min(100, score),
         verdict,
-        analysisReasoning: ["Signal convergence optimal.", "Scoring baseline stable."]
+        analysisReasoning: reasoning
     };
 };

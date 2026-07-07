@@ -1,4 +1,13 @@
 
+export interface TeamBaseline {
+    npxG: number;
+    xT: number;
+    avgXG: number;
+    avgXGA: number;
+    cleanSheets: number;
+    purity: number; // 1.0 = Real Data, 0.2 = Name-Hash Fallback
+}
+
 export interface TeamStats {
     name: string;
     goalsScored: number;
@@ -34,6 +43,7 @@ export interface TacticalSequence {
 export interface ModelAudit {
     signalPurity: number;
     analysisStability: number;
+    signalStrength: number;
     noiseRatio: number;
 }
 
@@ -48,6 +58,7 @@ export interface MatchContext {
     stakes: string;
     marketSentiment?: string;
     tacticalDrift?: string;
+    date?: string;
 }
 
 export interface AnalysisResult {

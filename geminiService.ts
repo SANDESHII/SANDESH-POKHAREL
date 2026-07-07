@@ -131,21 +131,29 @@ const generateAnalysisPrompt = (req: any, baselines: any, date: string) => `
     const dc = calculateMatchExpectancy(hP, aP, 0.2, 0, context);
     const topPaths = findTopTacticalPaths(dc.homeScoring, dc.awayScoring);
     const verifiedPath = topPaths[0];
-    const math = calculateProbability(dc.homeScoring, dc.awayScoring, dc.dependence, verifiedPath.phases, context);
+    const math = calculateProbability(dc.homeScoring, dc.awayScoring, dc.dependence, verifiedPath.phases, dc.purity, dc.eloDiff, context);
     
     const targetOutcome = math.allOutcomes.find(o => o.type === math.predictionType);
     const statisticalProb = targetOutcome ? (targetOutcome.prob * 100).toFixed(1) : "0.0";
     
-    // Remove dynamic entropy for pure accuracy
+    // Use the engine's new independent purity score
     const dynamicAudit = { 
-        signalPurity: Math.min(0.99, 0.88 + (math.lockCount * 0.02)), 
-        analysisStability: 0.95, 
-        noiseRatio: 0.05 
+        signalPurity: dc.purity, 
+        analysisStability: parseFloat((0.85 + (dc.purity * 0.08) + (verifiedPath.likelihood * 0.04)).toFixed(3)),
+        signalStrength: (math as any).signalStrength || 0.85,
+        noiseRatio: 1 - dc.purity 
     };
     
+    const avgSurety = verifiedPath.phases.reduce((sum, p) => sum + p.confidence, 0) / verifiedPath.phases.length;
+
+    const isHeuristic = dc.purity < 0.4;
+    const summary = isHeuristic 
+        ? `The match analysis is currently running on heuristic baseline data as no real-time signals could be verified for ${req.homeTeam} or ${req.awayTeam}. Prediction relies on statistical name-hash physics (${(dc.purity * 100).toFixed(0)}% signal purity).`
+        : `The match is expected to follow a ${math.predictionType === 'OVER_15' ? 'dynamic and open' : 'controlled and defensive'} pattern based on tactical physics. Statistical convergence (${statisticalProb}%) suggests ${math.predictionLabel} is highly likely as defensive fatigue meets offensive pressure. Analysis verified via Nuclear Fortress Protocol (${math.lockCount}/4 locks).`;
+
     return {
         probability: Math.round(math.probability),
-        summary: `The match is expected to follow a ${math.predictionType === 'OVER_15' ? 'dynamic and open' : 'controlled and defensive'} pattern based on tactical physics. Statistical convergence (${statisticalProb}%) suggests ${math.predictionLabel} is highly likely as defensive fatigue meets offensive pressure. Analysis verified via Nuclear Fortress Protocol (${math.lockCount}/4 locks).`,
+        summary,
         homeStats: hP,
         awayStats: aP,
         homeXG: dc.homeScoring,
@@ -165,7 +173,7 @@ const generateAnalysisPrompt = (req: any, baselines: any, date: string) => `
             sentimentScore: 0.6 
         },
         modelAudit: dynamicAudit,
-        surety: calculateConfidenceAudit(math.probability, dynamicAudit)
+        surety: calculateConfidenceAudit(math.probability / 100, verifiedPath.likelihood, dc.purity, avgSurety)
     };
 };
 
@@ -220,14 +228,17 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
             const dc = calculateMatchExpectancy(hD, aD, 0.2, parsed.marketIndicators.marketMovementSignal, context);
             const topPaths = findTopTacticalPaths(dc.homeScoring, dc.awayScoring);
             const verifiedPath = topPaths[0];
-            const math = calculateProbability(dc.homeScoring, dc.awayScoring, dc.dependence, verifiedPath.phases, context);
+            const math = calculateProbability(dc.homeScoring, dc.awayScoring, dc.dependence, verifiedPath.phases, dc.purity, dc.eloDiff, context);
             
             const audit = { 
-                signalPurity: Math.min(0.99, 0.85 + (math.lockCount * 0.03)), 
-                analysisStability: 0.96, 
-                noiseRatio: 0.04 
+                signalPurity: dc.purity, 
+                analysisStability: parseFloat((0.85 + (dc.purity * 0.08) + (verifiedPath.likelihood * 0.04)).toFixed(3)),
+                signalStrength: (math as any).signalStrength || 0.85,
+                noiseRatio: 1 - dc.purity 
             };
             
+            const avgSurety = verifiedPath.phases.reduce((sum, p) => sum + p.confidence, 0) / verifiedPath.phases.length;
+
             const finalResult: AnalysisResult = {
                 probability: Math.round(math.probability),
                 summary: parsed.matchSummary,
@@ -250,7 +261,7 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
                     sentimentScore: 0.8 
                 },
                 modelAudit: audit,
-                surety: calculateConfidenceAudit(math.probability, audit),
+                surety: calculateConfidenceAudit(math.probability / 100, verifiedPath.likelihood, dc.purity, avgSurety),
                 sources: sources.length > 0 ? sources : undefined,
                 realTimeData: {
                     homeLineup: parsed.homeLineup,
