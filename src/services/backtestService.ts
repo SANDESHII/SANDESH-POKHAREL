@@ -2,13 +2,9 @@
 import fs from 'fs';
 import path from 'path';
 import { getTeamBaseline } from './baselineDataService';
-import { 
-    calculateProbability, 
-    calculateMatchExpectancy, 
-    findTopTacticalPaths,
-    IngestionService,
-    StateStore
-} from './engine';
+import { MatchEngine } from './engine';
+import { StateStore } from '../core/kalman';
+import { IngestionService } from './ingestionService';
 import { MatchContext, AnalysisResult } from '../types';
 
 export interface HistoricalMatch {
@@ -18,6 +14,18 @@ export interface HistoricalMatch {
     actualScore: [number, number];
     league: string;
     context: MatchContext;
+    odds?: {
+        over25: number;
+        under25: number;
+    };
+}
+
+export interface EdgeSegment {
+    segment: string;
+    count: number;
+    hits: number;
+    hitRate: number;
+    avgEdge: number;
 }
 
 export interface BacktestSummary {
@@ -26,14 +34,21 @@ export interface BacktestSummary {
     under35Accuracy: number;
     averageConfidence: number;
     brierScore: number;
+    highPurityBrierScore: number;
+    highPurityMatches: number;
     calibrationBins: { bin: string; hitRate: number; expected: number; n: number }[];
+    edgeSegments: EdgeSegment[];
     matches: Array<{
         match: HistoricalMatch;
         prediction: AnalysisResult;
         isOver15Correct: boolean;
         isUnder35Correct: boolean;
+        marketEdge?: number;
     }>;
 }
+
+import { EdgeCalculator } from '../market/edgeCalculator';
+import { DixonColes } from '../core/dixonColes';
 
 export class BacktestService {
     private static parseCSV(csv: string): HistoricalMatch[] {
@@ -45,6 +60,8 @@ export class BacktestService {
         const hgIdx = headers.indexOf('FTHG');
         const agIdx = headers.indexOf('FTAG');
         const divIdx = headers.indexOf('Div');
+        const over25Idx = headers.indexOf('Avg>2.5');
+        const under25Idx = headers.indexOf('Avg<2.5');
 
         return lines.slice(1)
             .filter(line => line.trim() !== '')
@@ -65,7 +82,11 @@ export class BacktestService {
                         stakes: "STANDARD", 
                         marketSentiment: "Neutral", 
                         tacticalDrift: "STABLE" 
-                    }
+                    },
+                    odds: over25Idx !== -1 ? {
+                        over25: parseFloat(parts[over25Idx]),
+                        under25: parseFloat(parts[under25Idx])
+                    } : undefined
                 };
             })
             .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -84,9 +105,18 @@ export class BacktestService {
         
         const results: BacktestSummary["matches"] = [];
         let totalBrier = 0;
+        let highPurityBrier = 0;
+        let highPurityCount = 0;
         let overCorrect = 0;
         let underCorrect = 0;
         let totalConf = 0;
+
+        // Market Edge Segments
+        const edgeSegments = [
+            { name: 'High Edge (> 5 pts)', min: 0.05, max: 1.0, count: 0, hits: 0, sumEdge: 0 },
+            { name: 'Moderate Edge (2-5 pts)', min: 0.02, max: 0.05, count: 0, hits: 0, sumEdge: 0 },
+            { name: 'No/Neg Edge (< 2 pts)', min: -1.0, max: 0.02, count: 0, hits: 0, sumEdge: 0 }
+        ];
 
         // Calibration Bins
         const bins = Array.from({ length: 10 }, (_, i) => ({
@@ -112,12 +142,14 @@ export class BacktestService {
                     ...hBase,
                     name: match.homeTeam,
                     npxG: hState ? hState.estimatedNpxG : hBase.npxG,
+                    npxGVariance: hState ? hState.variance : 0.5,
                     dataPurity: hBase.purity
                 },
                 away: {
                     ...aBase,
                     name: match.awayTeam,
                     npxG: aState ? aState.estimatedNpxG : aBase.npxG,
+                    npxGVariance: aState ? aState.variance : 0.5,
                     dataPurity: aBase.purity
                 },
                 adjustment: { adjustmentA: 0.5, adjustmentB: 0.5, reliabilityScore: 0.9 }
@@ -126,10 +158,8 @@ export class BacktestService {
             const hD = IngestionService.standardize(ingested.home, ingested.adjustment);
             const aD = IngestionService.standardize(ingested.away, ingested.adjustment);
             
-            // 1. Predict (Using current latent states)
-            const dc = calculateMatchExpectancy(hD, aD, 0.2, 0, { ...match.context, date: match.date });
-            const topPaths = findTopTacticalPaths(dc.homeScoring, dc.awayScoring);
-            const math = calculateProbability(dc.homeScoring, dc.awayScoring, dc.dependence, topPaths[0].phases, dc.purity, dc.eloDiff, match.context);
+            // 1. Predict
+            const math = MatchEngine.calculateMatchExpectancy(hD, aD, { ...match.context, date: match.date });
             
             const totalGoals = match.actualScore[0] + match.actualScore[1];
             const isOver15 = totalGoals > 1.5;
@@ -137,10 +167,40 @@ export class BacktestService {
             const predProb = math.probability / 100;
             const predType = math.predictionType;
 
-            // 2. Score Calibration
+            // 2. Market Edge Calculation (using Over 2.5 if available for analysis)
+            let marketEdge = 0;
+            if (match.odds) {
+                // Calculate model's Over 2.5 prob for market comparison
+                const rhoData = DixonColes.fitRho([]); // Simplified
+                const hScoring = hD.npxG * (1 / aD.defensiveStability);
+                const aScoring = aD.npxG * (1 / hD.defensiveStability);
+                const matrix = DixonColes.calculateScoreMatrix(hScoring, aScoring, rhoData.rho);
+                const modelOver25 = DixonColes.calculateOverUnder(matrix, 2.5);
+
+                const overImplied = EdgeCalculator.impliedProbability(match.odds.over25);
+                const underImplied = EdgeCalculator.impliedProbability(match.odds.under25);
+                const [trueOver25] = EdgeCalculator.removeVig([overImplied, underImplied]);
+                
+                marketEdge = EdgeCalculator.calculateEdge(modelOver25, trueOver25);
+                
+                // Track in segments
+                const seg = edgeSegments.find(s => marketEdge >= s.min && marketEdge < s.max);
+                if (seg) {
+                    seg.count++;
+                    seg.sumEdge += marketEdge;
+                    if (totalGoals > 2.5) seg.hits++;
+                }
+            }
+
+            // 3. Score Calibration
             const outcome = predType === 'OVER_15' ? isOver15 : isUnder35;
             const brier = Math.pow(predProb - (outcome ? 1 : 0), 2);
             totalBrier += brier;
+
+            if (hBase.purity === 1.0 && aBase.purity === 1.0) {
+                highPurityBrier += brier;
+                highPurityCount++;
+            }
 
             const bin = bins.find(b => predProb >= b.min && predProb < b.max) || bins[9];
             bin.n++;
@@ -155,10 +215,11 @@ export class BacktestService {
                 match,
                 prediction: { ...math, probability: Math.round(math.probability) } as any,
                 isOver15Correct: isOver15,
-                isUnder35Correct: isUnder35
+                isUnder35Correct: isUnder35,
+                marketEdge
             });
 
-            // 3. Update Loop (Walk-Forward)
+            // 4. Update Loop (Walk-Forward)
             // Update the StateStore with the ACTUAL observed result to influence future predictions
             StateStore.updateStateAfterMatch(match.homeTeam, match.actualScore[0], match.actualScore[1], match.date);
             StateStore.updateStateAfterMatch(match.awayTeam, match.actualScore[1], match.actualScore[0], match.date);
@@ -170,11 +231,20 @@ export class BacktestService {
             under35Accuracy: (underCorrect / samples.filter(m => results.find(r => r.match === m)?.prediction.predictionType === 'UNDER_35').length) * 100,
             averageConfidence: totalConf / samples.length,
             brierScore: totalBrier / samples.length,
+            highPurityBrierScore: highPurityCount > 0 ? highPurityBrier / highPurityCount : 0,
+            highPurityMatches: highPurityCount,
             calibrationBins: bins.filter(b => b.n > 0).map(b => ({
                 bin: `${(b.min * 100).toFixed(0)}-${(b.max * 100).toFixed(0)}%`,
                 hitRate: b.hits / b.n,
                 expected: b.sumProb / b.n,
                 n: b.n
+            })),
+            edgeSegments: edgeSegments.map(s => ({
+                segment: s.name,
+                count: s.count,
+                hits: s.hits,
+                hitRate: s.count > 0 ? s.hits / s.count : 0,
+                avgEdge: s.count > 0 ? s.sumEdge / s.count : 0
             })),
             matches: results
         };

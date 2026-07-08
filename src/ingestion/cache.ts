@@ -1,0 +1,34 @@
+/**
+ * CENTRALIZED INGESTION CACHE
+ * Prevents redundant API calls and respects rate limits.
+ */
+export class IngestionCache {
+    private static cache = new Map<string, { data: any; expiry: number }>();
+    private static DEFAULT_TTL = 3600000; // 1 hour
+    private static PERMANENT_TTL = 315360000000; // ~10 years (forever)
+
+    static set(key: string, data: any, ttl: number = this.DEFAULT_TTL): void {
+        this.cache.set(key, {
+            data,
+            expiry: Date.now() + ttl
+        });
+    }
+
+    static setPermanent(key: string, data: any): void {
+        this.set(key, data, this.PERMANENT_TTL);
+    }
+
+    static get<T>(key: string): T | null {
+        const cached = this.cache.get(key);
+        if (!cached) return null;
+        if (Date.now() > cached.expiry) {
+            this.cache.delete(key);
+            return null;
+        }
+        return cached.data as T;
+    }
+
+    static clear(): void {
+        this.cache.clear();
+    }
+}

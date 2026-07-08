@@ -72,15 +72,20 @@ export const VerifiedPrediction: React.FC<VerifiedPredictionProps> = ({ analysis
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
                 <div className="space-y-1">
-                    <span className="text-[8px] font-black text-zinc-600 uppercase">Confidence</span>
-                    <p className="text-xl font-black text-white">{((path.accuracyScore || 0.8) * 100).toFixed(1)}%</p>
+                    <span className="text-[8px] font-black text-zinc-600 uppercase">Model Confidence</span>
+                    <p className="text-xl font-black text-white">{analysis.probability}%</p>
+                    {analysis.simulation && (
+                        <p className="text-[9px] font-bold text-zinc-500 tracking-tighter">
+                            Range: {(analysis.simulation.confidenceInterval[0] * 100).toFixed(1)}% — {(analysis.simulation.confidenceInterval[1] * 100).toFixed(1)}%
+                        </p>
+                    )}
                 </div>
                 <div className="space-y-1">
-                    <span className="text-[8px] font-black text-zinc-600 uppercase">Convergence</span>
+                    <span className="text-[8px] font-black text-zinc-600 uppercase">Tactical Convergence</span>
                     <p className="text-xl font-black text-white">{((path.likelihood || 0.5) * 100).toFixed(1)}%</p>
                 </div>
                 <div className="space-y-1">
-                    <span className="text-[8px] font-black text-zinc-600 uppercase">Purity Score</span>
+                    <span className="text-[8px] font-black text-zinc-600 uppercase">Signal Purity</span>
                     <p className="text-xl font-black text-white">{((analysis.modelAudit?.signalPurity || 0.9) * 100).toFixed(1)}%</p>
                 </div>
             </div>

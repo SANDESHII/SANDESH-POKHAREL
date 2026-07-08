@@ -53,8 +53,8 @@ export const BacktestDisplay: React.FC = () => {
                     >
                         {[
                             { label: 'Samples Analyzed', value: summary.totalMatches, icon: Activity },
-                            { label: 'Brier Score', value: summary.brierScore.toFixed(4), icon: BarChart3, detail: 'Lower is better' },
-                            { label: 'Avg. Confidence', value: `${summary.averageConfidence.toFixed(1)}%`, icon: BarChart3 },
+                            { label: 'Overall Brier', value: summary.brierScore.toFixed(4), icon: BarChart3, detail: 'Across all inputs' },
+                            { label: 'High-Purity Brier', value: summary.highPurityBrierScore.toFixed(4), icon: CheckCircle2, detail: `N=${summary.highPurityMatches} (Real Data Only)` },
                             { label: 'Signal Accuracy', value: `${((summary.over15Accuracy + summary.under35Accuracy) / 2).toFixed(1)}%`, icon: CheckCircle2 }
                         ].map((stat, i) => (
                             <div key={i} className="p-6 bg-zinc-950 border border-zinc-900 rounded-2xl space-y-4">
@@ -66,6 +66,38 @@ export const BacktestDisplay: React.FC = () => {
                                 </div>
                             </div>
                         ))}
+
+                        <div className="md:col-span-4 p-6 bg-zinc-950 border border-zinc-900 rounded-2xl">
+                            <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-6">Market Edge Analysis (O2.5 Lines)</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                {summary.edgeSegments.map((seg, i) => (
+                                    <div key={i} className="space-y-4 p-5 bg-zinc-900/30 rounded-xl border border-zinc-900 transition-all hover:bg-zinc-900/50">
+                                        <div className="flex justify-between items-start">
+                                            <span className="text-[9px] font-black text-white uppercase tracking-widest">{seg.segment}</span>
+                                            <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${seg.hitRate > 0.5 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-zinc-800 text-zinc-500'}`}>
+                                                Hit Rate: {(seg.hitRate * 100).toFixed(1)}%
+                                            </span>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between text-[8px] text-zinc-600 font-bold uppercase tracking-tighter">
+                                                <span>Sample Size</span>
+                                                <span>{seg.count} Matches</span>
+                                            </div>
+                                            <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                                                <div 
+                                                    className="h-full bg-zinc-500 transition-all duration-1000" 
+                                                    style={{ width: `${(seg.count / summary.totalMatches) * 100}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center justify-between pt-2 border-t border-zinc-900">
+                                            <span className="text-[8px] text-zinc-600 font-bold uppercase tracking-tighter">Avg Edge</span>
+                                            <span className="text-sm font-black text-white">+{(seg.avgEdge * 100).toFixed(2)} pts</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
 
                         <div className="md:col-span-4 p-6 bg-zinc-950 border border-zinc-900 rounded-2xl">
                             <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-6">Reliability Calibration</h4>
@@ -95,6 +127,7 @@ export const BacktestDisplay: React.FC = () => {
                                     <tr>
                                         <th className="px-6 py-4 text-[8px] font-black uppercase text-zinc-500 tracking-widest">Match-Up</th>
                                         <th className="px-6 py-4 text-[8px] font-black uppercase text-zinc-500 tracking-widest text-center">Score</th>
+                                        <th className="px-6 py-4 text-[8px] font-black uppercase text-zinc-500 tracking-widest text-center">Edge</th>
                                         <th className="px-6 py-4 text-[8px] font-black uppercase text-zinc-500 tracking-widest">Signal</th>
                                         <th className="px-6 py-4 text-[8px] font-black uppercase text-zinc-500 tracking-widest text-right">Verification</th>
                                     </tr>
@@ -107,7 +140,14 @@ export const BacktestDisplay: React.FC = () => {
                                             <tr key={i} className="hover:bg-zinc-900/30 transition-colors">
                                                 <td className="px-6 py-4">
                                                     <div className="flex flex-col">
-                                                        <span className="text-[11px] font-black text-white uppercase tracking-tight">{item.match.homeTeam} vs {item.match.awayTeam}</span>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-[11px] font-black text-white uppercase tracking-tight">{item.match.homeTeam} vs {item.match.awayTeam}</span>
+                                                            {item.prediction.purity >= 80 ? (
+                                                                <span className="text-[6px] px-1 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded font-black">HIGH PURITY</span>
+                                                            ) : (
+                                                                <span className="text-[6px] px-1 bg-zinc-900 text-zinc-600 border border-zinc-800 rounded font-black uppercase">Synthetic</span>
+                                                            )}
+                                                        </div>
                                                         <span className="text-[9px] text-zinc-600 font-bold uppercase">{item.match.league}</span>
                                                     </div>
                                                 </td>
@@ -115,6 +155,15 @@ export const BacktestDisplay: React.FC = () => {
                                                     <span className="px-2 py-1 bg-zinc-900 border border-zinc-800 rounded text-[10px] font-bold text-zinc-400 font-mono">
                                                         {item.match.actualScore[0]} - {item.match.actualScore[1]}
                                                     </span>
+                                                </td>
+                                                <td className="px-6 py-4 text-center">
+                                                    {item.marketEdge !== undefined ? (
+                                                        <span className={`text-[10px] font-bold ${item.marketEdge > 0.05 ? 'text-emerald-500' : item.marketEdge > 0.02 ? 'text-emerald-400/70' : 'text-zinc-600'}`}>
+                                                            {item.marketEdge > 0 ? '+' : ''}{(item.marketEdge * 100).toFixed(1)} pts
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-[10px] text-zinc-800">—</span>
+                                                    )}
                                                 </td>
                                                 <td className="px-6 py-4">
                                                     <div className="flex items-center gap-2">

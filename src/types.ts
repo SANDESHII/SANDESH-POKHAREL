@@ -25,6 +25,7 @@ export interface TeamStats {
     matchHistory?: any[];
     calibrationStability?: number;
     dataPurity?: number;
+    npxGVariance?: number;
 }
 
 export interface TacticalPhase {
@@ -59,6 +60,44 @@ export interface MatchContext {
     marketSentiment?: string;
     tacticalDrift?: string;
     date?: string;
+    restDays?: {
+        home: number;
+        away: number;
+    };
+}
+
+export interface MarketData {
+    odds: {
+        over15: number;
+        under15: number; // Added
+        under35: number;
+        homeWin: number;
+        draw: number;
+        awayWin: number;
+    };
+    impliedProb: {
+        over15: number;
+        under35: number;
+    };
+    edge: {
+        over15: number;
+        under35: number;
+    };
+    source: string;
+}
+
+export interface StakingPlan {
+    strategy: 'KELLY' | 'FRACTIONAL_KELLY' | 'FLAT';
+    suggestedStake: number; // Percentage of bankroll
+    expectedValue: number;
+}
+
+export interface SimulationResult {
+    mean: number;
+    median: number;
+    stdDev: number;
+    confidenceInterval: [number, number];
+    distribution: number[]; // Histogram of goals
 }
 
 export interface AnalysisResult {
@@ -75,13 +114,19 @@ export interface AnalysisResult {
     potentialCeiling: number;
     prediction?: string;
     predictionType?: 'OVER_15' | 'UNDER_35' | 'VOID';
+    predictionLabel?: string;
     lockCount: number;
+    purity: number;
+    signalStrength: number;
     isSureshot?: boolean;
     context: MatchContext;
     marketIndicators: {
         volume: string;
         sentimentScore: number;
     };
+    marketData?: MarketData;
+    staking?: StakingPlan;
+    simulation?: SimulationResult;
     modelAudit: ModelAudit;
     surety?: AnalysisConfidence;
     sources?: string[];

@@ -1,11 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { 
-    calculateProbability, 
-    calculateMatchExpectancy,
-    findTopTacticalPaths,
-    calculateConfidenceAudit,
-    IngestionService
-} from "./src/services/engine";
+import { MatchEngine } from "./src/services/engine";
+import { IngestionService } from "./src/services/ingestionService";
 import { getTeamBaseline } from "./src/services/baselineDataService";
 import { AnalysisResult } from "./src/types";
 
@@ -128,52 +123,18 @@ const generateAnalysisPrompt = (req: any, baselines: any, date: string) => `
         marketSentiment: (req.awayTeam.length % 2 === 0) ? "BULLISH" : "NEUTRAL", 
         tacticalDrift: (req.homeTeam.length + req.awayTeam.length > 25) ? "VOLATILE" : "STABLE" 
     };
-    const dc = calculateMatchExpectancy(hP, aP, 0.2, 0, context);
-    const topPaths = findTopTacticalPaths(dc.homeScoring, dc.awayScoring);
-    const verifiedPath = topPaths[0];
-    const math = calculateProbability(dc.homeScoring, dc.awayScoring, dc.dependence, verifiedPath.phases, dc.purity, dc.eloDiff, context);
-    
-    const targetOutcome = math.allOutcomes.find(o => o.type === math.predictionType);
-    const statisticalProb = targetOutcome ? (targetOutcome.prob * 100).toFixed(1) : "0.0";
-    
-    // Use the engine's new independent purity score
-    const dynamicAudit = { 
-        signalPurity: dc.purity, 
-        analysisStability: parseFloat((0.85 + (dc.purity * 0.08) + (verifiedPath.likelihood * 0.04)).toFixed(3)),
-        signalStrength: (math as any).signalStrength || 0.85,
-        noiseRatio: 1 - dc.purity 
-    };
-    
-    const avgSurety = verifiedPath.phases.reduce((sum, p) => sum + p.confidence, 0) / verifiedPath.phases.length;
 
-    const isHeuristic = dc.purity < 0.4;
-    const summary = isHeuristic 
-        ? `The match analysis is currently running on heuristic baseline data as no real-time signals could be verified for ${req.homeTeam} or ${req.awayTeam}. Prediction relies on statistical name-hash physics (${(dc.purity * 100).toFixed(0)}% signal purity).`
-        : `The match is expected to follow a ${math.predictionType === 'OVER_15' ? 'dynamic and open' : 'controlled and defensive'} pattern based on tactical physics. Statistical convergence (${statisticalProb}%) suggests ${math.predictionLabel} is highly likely as defensive fatigue meets offensive pressure. Analysis verified via Nuclear Fortress Protocol (${math.lockCount}/4 locks).`;
+    const math = MatchEngine.calculateMatchExpectancy(hP, aP, context);
+    const verifiedPath = math.verifiedOptimalPath!;
+
+    const summary = math.purity < 40 
+        ? `The match analysis is currently running on heuristic baseline data as no real-time signals could be verified for ${req.homeTeam} or ${req.awayTeam}. Prediction relies on statistical name-hash physics (${math.purity}% signal purity).`
+        : math.summary;
 
     return {
-        probability: Math.round(math.probability),
+        ...math,
         summary,
-        homeStats: hP,
-        awayStats: aP,
-        homeXG: dc.homeScoring,
-        awayXG: dc.awayScoring,
-        dependence: dc.dependence,
-        tacticalPath: verifiedPath.phases,
-        verifiedOptimalPath: verifiedPath,
-        prediction: math.predictionLabel.toUpperCase(),
-        predictionType: math.predictionType as any,
-        lockCount: math.lockCount,
-        isSureshot: math.isSureshot,
-        minimumExpectancy: (dc.homeScoring + dc.awayScoring) * 0.75,
-        potentialCeiling: (dc.homeScoring + dc.awayScoring) * 1.35,
-        context: { weather: "Standard", stakes: "Standard", marketSentiment: "Neutral", tacticalDrift: "Stable" },
-        marketIndicators: { 
-            volume: (dc.homeScoring + dc.awayScoring) > 3.2 ? "HIGH" : "MEDIUM", 
-            sentimentScore: 0.6 
-        },
-        modelAudit: dynamicAudit,
-        surety: calculateConfidenceAudit(math.probability / 100, verifiedPath.likelihood, dc.purity, avgSurety)
+        surety: MatchEngine.calculateConfidenceAudit(math.probability / 100, verifiedPath.likelihood, math.purity)
     };
 };
 
@@ -225,49 +186,14 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
                 tacticalDrift: normalize(parsed.context?.tacticalDrift, "STABLE")
             };
 
-            const dc = calculateMatchExpectancy(hD, aD, 0.2, parsed.marketIndicators.marketMovementSignal, context);
-            const topPaths = findTopTacticalPaths(dc.homeScoring, dc.awayScoring);
-            const verifiedPath = topPaths[0];
-            const math = calculateProbability(dc.homeScoring, dc.awayScoring, dc.dependence, verifiedPath.phases, dc.purity, dc.eloDiff, context);
+            const math = MatchEngine.calculateMatchExpectancy(hD, aD, context);
+            const verifiedPath = math.verifiedOptimalPath!;
             
-            const audit = { 
-                signalPurity: dc.purity, 
-                analysisStability: parseFloat((0.85 + (dc.purity * 0.08) + (verifiedPath.likelihood * 0.04)).toFixed(3)),
-                signalStrength: (math as any).signalStrength || 0.85,
-                noiseRatio: 1 - dc.purity 
-            };
-            
-            const avgSurety = verifiedPath.phases.reduce((sum, p) => sum + p.confidence, 0) / verifiedPath.phases.length;
-
             const finalResult: AnalysisResult = {
-                probability: Math.round(math.probability),
-                summary: parsed.matchSummary,
-                homeStats: hD,
-                awayStats: aD,
-                homeXG: dc.homeScoring,
-                awayXG: dc.awayScoring,
-                dependence: dc.dependence,
-                tacticalPath: verifiedPath.phases,
-                verifiedOptimalPath: verifiedPath,
-                prediction: parsed.prediction || math.predictionLabel.toUpperCase(),
-                predictionType: (parsed.predictionType || math.predictionType) as any,
-                lockCount: math.lockCount,
-                isSureshot: math.isSureshot,
-                minimumExpectancy: Math.max(0.5, (dc.homeScoring + dc.awayScoring) * 0.8),
-                potentialCeiling: Math.min(6.5, (dc.homeScoring + dc.awayScoring) * 1.3),
-                context,
-                marketIndicators: { 
-                    volume: (dc.homeScoring + dc.awayScoring) > 3.5 ? "EXTREME" : (dc.homeScoring + dc.awayScoring > 2.5 ? "HIGH" : "MEDIUM"), 
-                    sentimentScore: 0.8 
-                },
-                modelAudit: audit,
-                surety: calculateConfidenceAudit(math.probability / 100, verifiedPath.likelihood, dc.purity, avgSurety),
-                sources: sources.length > 0 ? sources : undefined,
-                realTimeData: {
-                    homeLineup: parsed.homeLineup,
-                    awayLineup: parsed.awayLineup,
-                    tacticalShift: parsed.tacticalShift
-                }
+                ...math,
+                summary: parsed.matchSummary || math.summary,
+                surety: MatchEngine.calculateConfidenceAudit(math.probability / 100, verifiedPath.likelihood, math.purity),
+                sources: sources.length > 0 ? sources : undefined
             };
 
             cache.set(cacheKey, { result: finalResult, timestamp: Date.now() });
