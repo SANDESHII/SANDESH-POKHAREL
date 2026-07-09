@@ -1,6 +1,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { MatchEngine } from "./src/services/engine";
 import { IngestionService } from "./src/services/ingestionService";
+import { StateStore } from "./src/core/kalman";
+import { PersistenceService } from "./src/services/persistenceService";
 import { getTeamBaseline } from "./src/services/baselineDataService";
 import { AnalysisResult } from "./src/types";
 
@@ -159,6 +161,14 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
 
             const baselines = { home: getTeamBaseline(req.homeTeam), away: getTeamBaseline(req.awayTeam) };
             
+            // Load latent states from persistence
+            const [hState, aState] = await Promise.all([
+                PersistenceService.getTeamState(req.homeTeam),
+                PersistenceService.getTeamState(req.awayTeam)
+            ]);
+            if (hState) StateStore.set(req.homeTeam, hState);
+            if (aState) StateStore.set(req.awayTeam, aState);
+
             const date = new Date().toISOString().split('T')[0];
             const response = await ai.models.generateContent({
                 model: modelName,
@@ -177,8 +187,8 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
             const sources = grounding.map((chunk: any) => chunk.web?.uri).filter(Boolean);
             const normalize = (s: string | undefined, fallback: string) => (s && s.length > 2) ? s.trim().toUpperCase() : fallback;
 
-            const hD = IngestionService.standardize(parsed.home, parsed.adjustment);
-            const aD = IngestionService.standardize(parsed.away, parsed.adjustment);
+            const hD = IngestionService.standardize({ ...parsed.home, npxGVariance: hState?.variance || 0.4 }, parsed.adjustment);
+            const aD = IngestionService.standardize({ ...parsed.away, npxGVariance: aState?.variance || 0.4 }, parsed.adjustment);
             const context = {
                 weather: normalize(parsed.context?.weather, "STANDARD"),
                 stakes: normalize(parsed.context?.matchContextFlag, "STANDARD"),

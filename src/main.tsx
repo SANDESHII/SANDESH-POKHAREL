@@ -108,6 +108,8 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({
     </form>
 );
 
+import { fetchWithTimeout } from './lib/fetchUtils';
+
 const App: React.FC = () => {
     const [homeInput, setHomeInput] = useState('');
     const [awayInput, setAwayInput] = useState('');
@@ -149,7 +151,8 @@ const App: React.FC = () => {
         setAnalysis(null);
 
         try {
-            const response = await fetch('/api/analyze', {
+            // Use a longer timeout for the complex analysis endpoint
+            const response = await fetchWithTimeout('/api/analyze', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -159,7 +162,7 @@ const App: React.FC = () => {
                     kickoff: (timeInput || 'UPCOMING').toUpperCase(),
                     isSearchEnabled: isSearchEnabled
                 })
-            });
+            }, 60000); // 60s timeout for AI search + analysis
 
             if (!response.ok) {
                 const errData = await response.json();

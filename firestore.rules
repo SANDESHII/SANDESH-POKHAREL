@@ -1,0 +1,8 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /team_states/{teamId} {
+      allow read, write: if true; // Simple rules for this applet
+    }
+  }
+}

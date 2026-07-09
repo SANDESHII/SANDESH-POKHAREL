@@ -1,5 +1,7 @@
 import { IngestionCache } from '../cache';
 import { IngestionRetry } from '../retry';
+import { fetchWithTimeout } from '../../lib/fetchUtils';
+import { IngestionValidator } from '../validator';
 
 /**
  * THE ODDS API PROVIDER
@@ -20,18 +22,23 @@ export class LiveOddsProvider {
         if (cached) return cached;
 
         const result = await IngestionRetry.execute(async () => {
-            // @ts-ignore
-            const _url = `${this.BASE_URL}/${league}/odds/?regions=uk&markets=h2h,totals&apiKey=${this.API_KEY}`;
-            // Simulation
-            return {}; 
+            const url = `${this.BASE_URL}/${league}/odds/?regions=uk&markets=h2h,totals&apiKey=${this.API_KEY}`;
+            const response = await fetchWithTimeout(url);
+            if (!response.ok) throw new Error(`Odds API Error: ${response.status}`);
+            const raw = await response.json();
+            
+            const validated = IngestionValidator.validateOdds(raw);
+            if (!validated) throw new Error('Invalid odds data format from API');
+            
+            return validated;
         }, `OddsAPI_${matchId}`);
 
         if (result) {
-            IngestionCache.set(cacheKey, result, 1800000); // 30 min cache for odds
+            IngestionCache.set(cacheKey, result, IngestionCache.ODDS_DATA_TTL);
             return result;
         }
 
-        return this.getSimulatedOdds();
+        return null;
     }
 
     private static getSimulatedOdds() {

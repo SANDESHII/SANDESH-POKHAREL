@@ -70,6 +70,14 @@ export class SignalFilter {
         return this.store.get(teamId);
     }
 
+    static set(teamId: string, state: TeamState): void {
+        this.store.set(teamId, state);
+    }
+
+    static getAll(): Map<string, TeamState> {
+        return new Map(this.store);
+    }
+
     static reset(): void {
         this.store.clear();
     }

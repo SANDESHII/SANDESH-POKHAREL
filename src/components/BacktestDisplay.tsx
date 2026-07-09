@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Activity, CheckCircle2, XCircle, BarChart3, Play } from 'lucide-react';
 import { BacktestSummary } from '../services/backtestService';
+import { fetchWithTimeout } from '../lib/fetchUtils';
 
 export const BacktestDisplay: React.FC = () => {
     const [summary, setSummary] = useState<BacktestSummary | null>(null);
@@ -12,7 +13,7 @@ export const BacktestDisplay: React.FC = () => {
     const runBacktest = async () => {
         setLoading(true);
         try {
-            const res = await fetch('/api/backtest');
+            const res = await fetchWithTimeout('/api/backtest', {}, 120000); // 120s for long backtests
             const data = await res.json();
             setSummary(data);
             setShowResults(true);

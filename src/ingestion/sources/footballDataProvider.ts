@@ -2,6 +2,9 @@ import { RawMatchData } from '../schema';
 import { IngestionCache } from '../cache';
 import { IngestionRetry } from '../retry';
 
+import { IngestionValidator } from '../validator';
+import { fetchWithTimeout } from '../../lib/fetchUtils';
+
 /**
  * FOOTBALL-DATA.CO.UK PROVIDER
  * Fetches historical results and odds from free CSV sources.
@@ -32,13 +35,21 @@ export class FootballDataProvider {
 
         const result = await IngestionRetry.execute(async () => {
             console.log(`Fetching historical data from ${url}`);
-            // Simulation of fetch logic
-            const mockData: RawMatchData[] = []; 
-            return mockData;
+            const response = await fetchWithTimeout(url);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            
+            // In a real system, we would parse CSV here.
+            // For this simulation, we'll imagine we have rows and validate them.
+            const rows: any[] = []; 
+            const validated = rows
+                .map(r => IngestionValidator.validateRawMatch(r, league, season))
+                .filter((r): r is RawMatchData => r !== null);
+
+            return validated;
         }, `FootballDataCSV_${league}`);
 
         if (result) {
-            IngestionCache.setPermanent(cacheKey, result);
+            IngestionCache.set(cacheKey, result, IngestionCache.MATCH_DATA_TTL);
             return result;
         }
         

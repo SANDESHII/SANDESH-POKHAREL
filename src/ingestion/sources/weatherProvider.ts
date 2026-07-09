@@ -1,5 +1,7 @@
 import { IngestionCache } from '../cache';
 import { IngestionRetry } from '../retry';
+import { fetchWithTimeout } from '../../lib/fetchUtils';
+import { IngestionValidator } from '../validator';
 
 /**
  * OPEN-METEO WEATHER PROVIDER
@@ -14,17 +16,22 @@ export class WeatherProvider {
         if (cached) return cached;
 
         const result = await IngestionRetry.execute(async () => {
-            // @ts-ignore
-            const _url = `${this.BASE_URL}?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,precipitation_sum&timezone=auto`;
-            // Simulation
-            return { temp: 18, condition: 'Clear', precipitation: 0 };
+            const url = `${this.BASE_URL}?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,precipitation_sum&timezone=auto&start_date=${date}&end_date=${date}`;
+            const response = await fetchWithTimeout(url);
+            if (!response.ok) throw new Error(`Weather API Error: ${response.status}`);
+            const raw = await response.json();
+            
+            const validated = IngestionValidator.validateWeather(raw);
+            if (!validated) throw new Error('Invalid weather data format from API');
+            
+            return validated;
         }, `WeatherAPI_${lat}_${lon}`);
 
         if (result) {
-            IngestionCache.set(cacheKey, result, 43200000); // 12 hour cache
+            IngestionCache.set(cacheKey, result, IngestionCache.WEATHER_DATA_TTL);
             return result;
         }
 
-        return { temp: 15, condition: 'Unknown', precipitation: 0 };
+        return null;
     }
 }

@@ -5,6 +5,7 @@ import { getTeamBaseline } from './baselineDataService';
 import { MatchEngine } from './engine';
 import { StateStore } from '../core/kalman';
 import { IngestionService } from './ingestionService';
+import { PersistenceService } from './persistenceService';
 import { MatchContext, AnalysisResult } from '../types';
 
 export interface HistoricalMatch {
@@ -224,6 +225,9 @@ export class BacktestService {
             StateStore.updateStateAfterMatch(match.homeTeam, match.actualScore[0], match.actualScore[1], match.date);
             StateStore.updateStateAfterMatch(match.awayTeam, match.actualScore[1], match.actualScore[0], match.date);
         }
+
+        // Persist the final latent states to Firestore after the walk-forward is complete
+        await PersistenceService.saveTeamStates(StateStore.getAll());
 
         return {
             totalMatches: samples.length,

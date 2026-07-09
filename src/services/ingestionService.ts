@@ -7,6 +7,7 @@ import { GeminiEstimator } from '../ingestion/sources/geminiEstimator';
 import { StandardizedInput, TeamMatchInput } from '../ingestion/schema';
 
 import { StateStore } from '../core/kalman';
+import { PersistenceService } from './persistenceService';
 
 /**
  * INGESTION SERVICE
@@ -35,66 +36,76 @@ export class IngestionService {
         league: string, 
         date: string
     ): Promise<StandardizedInput> {
-        // 1. Fetch Parallel Enrichment
-        const [_historical, odds, weather] = await Promise.all([
+        // 1. Fetch Parallel Enrichment with explicit fallback tiers
+        const [historicalData, odds, weather] = await Promise.all([
             FootballDataProvider.fetchSeasonData(league, '23/24'),
             LiveOddsProvider.getOdds(league, `${homeTeam}-${awayTeam}`),
             WeatherProvider.getForecast(51.5, -0.1, date)
         ]);
 
-        // 2. Try Primary Data Sources, then Fallback
-        let hRaw = null;
-        let aRaw = null;
-        let hSourceType: 'real_provider' | 'ai_estimate' | 'insufficient' = 'real_provider';
-        let aSourceType: 'real_provider' | 'ai_estimate' | 'insufficient' = 'real_provider';
+        // 2. Fallback Chain for Team Stats
+        const getTeamStatsChain = async (teamId: string): Promise<{ stats: any, sourceType: 'real_provider' | 'ai_estimate' | 'insufficient' }> => {
+            // Tier 1: Real historical matches for this specific team
+            const teamMatches = historicalData.filter(m => m.homeTeam === teamId || m.awayTeam === teamId);
+            
+            if (teamMatches.length >= 3) {
+                const goals = teamMatches.map(m => m.homeTeam === teamId ? (m.homeGoals || 0) : (m.awayGoals || 0));
+                const ga = teamMatches.map(m => m.homeTeam === teamId ? (m.awayGoals || 0) : (m.homeGoals || 0));
+                const avgG = goals.reduce((a, b) => a + b, 0) / goals.length;
+                const avgGA = ga.reduce((a, b) => a + b, 0) / ga.length;
 
-        // Extract trailing goal sequences for outlier gating
-        const homeSequence = _historical
-            .filter(m => m.homeTeam === homeTeam || m.awayTeam === homeTeam)
-            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-            .slice(0, 10)
-            .map(m => m.homeTeam === homeTeam ? (m.homeGoals || 0) : (m.awayGoals || 0));
+                return {
+                    stats: { npxG: avgG, npxGA: avgGA, npxGSequence: goals.slice(0, 10) },
+                    sourceType: 'real_provider'
+                };
+            }
 
-        const awaySequence = _historical
-            .filter(m => m.homeTeam === awayTeam || m.awayTeam === awayTeam)
-            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-            .slice(0, 10)
-            .map(m => m.homeTeam === awayTeam ? (m.homeGoals || 0) : (m.awayGoals || 0));
+            // Tier 2: Gemini Estimate (AI tier)
+            const aiEstimate = await GeminiEstimator.estimateStats(teamId, `Recent form in ${league}`);
+            if (aiEstimate && aiEstimate.purity > 0.1) {
+                return {
+                    stats: { ...aiEstimate, npxGSequence: [] },
+                    sourceType: 'ai_estimate'
+                };
+            }
 
-        // Simulation of finding match in historical
-        const historicalMatch = _historical.find(m => 
-            (m.homeTeam === homeTeam && m.awayTeam === awayTeam) || 
-            (m.homeTeam === awayTeam && m.awayTeam === homeTeam)
-        );
+            // Tier 3: League Average (Insufficient)
+            return {
+                stats: { npxG: 1.35, npxGA: 1.35, npxGSequence: [] },
+                sourceType: 'insufficient'
+            };
+        };
 
-        if (historicalMatch) {
-            hRaw = { npxG: 1.4, npxGA: 1.2, npxGSequence: homeSequence };
-            aRaw = { npxG: 1.1, npxGA: 1.5, npxGSequence: awaySequence };
-        } else {
-            hSourceType = 'ai_estimate';
-            aSourceType = 'ai_estimate';
-            [hRaw, aRaw] = await Promise.all([
-                GeminiEstimator.estimateStats(homeTeam, `Match vs ${awayTeam}`),
-                GeminiEstimator.estimateStats(awayTeam, `Match vs ${homeTeam}`)
-            ]);
-            if (hRaw) hRaw.npxGSequence = homeSequence;
-            if (aRaw) aRaw.npxGSequence = awaySequence;
-        }
+        const [hTier, aTier] = await Promise.all([
+            getTeamStatsChain(homeTeam),
+            getTeamStatsChain(awayTeam)
+        ]);
 
-        // Final safety check - if still null or extremely low confidence
-        if (!hRaw || (hRaw.purity !== undefined && hRaw.purity < 0.1)) hSourceType = 'insufficient';
-        if (!aRaw || (aRaw.purity !== undefined && aRaw.purity < 0.1)) aSourceType = 'insufficient';
+        const hRaw = hTier.stats;
+        const aRaw = aTier.stats;
+        const hSourceType = hTier.sourceType;
+        const aSourceType = aTier.sourceType;
 
         const fetchedAt = new Date().toISOString();
         const LEAGUE_AVG = 1.35;
+
+        // Load latent states from persistence
+        if (!StateStore.get(homeTeam)) {
+            const hPersisted = await PersistenceService.getTeamState(homeTeam);
+            if (hPersisted) StateStore.set(homeTeam, hPersisted);
+        }
+        if (!StateStore.get(awayTeam)) {
+            const aPersisted = await PersistenceService.getTeamState(awayTeam);
+            if (aPersisted) StateStore.set(awayTeam, aPersisted);
+        }
 
         const hState = StateStore.get(homeTeam);
         const aState = StateStore.get(awayTeam);
 
         const homeInput: TeamMatchInput = {
             teamId: homeTeam,
-            npxG: hSourceType === 'insufficient' ? LEAGUE_AVG : (hRaw?.npxG || LEAGUE_AVG),
-            npxGA: hSourceType === 'insufficient' ? LEAGUE_AVG : (hRaw?.npxGA || LEAGUE_AVG),
+            npxG: hRaw?.npxG || LEAGUE_AVG,
+            npxGA: hRaw?.npxGA || LEAGUE_AVG,
             sourceType: hSourceType,
             sourceConfidence: hSourceType === 'real_provider' ? 1.0 : (hSourceType === 'ai_estimate' ? 0.6 : 0.0),
             npxGVariance: hState ? hState.variance : 0.4,
@@ -103,8 +114,8 @@ export class IngestionService {
 
         const awayInput: TeamMatchInput = {
             teamId: awayTeam,
-            npxG: aSourceType === 'insufficient' ? LEAGUE_AVG : (aRaw?.npxG || LEAGUE_AVG),
-            npxGA: aSourceType === 'insufficient' ? LEAGUE_AVG : (aRaw?.npxGA || LEAGUE_AVG),
+            npxG: aRaw?.npxG || LEAGUE_AVG,
+            npxGA: aRaw?.npxGA || LEAGUE_AVG,
             sourceType: aSourceType,
             sourceConfidence: aSourceType === 'real_provider' ? 1.0 : (aSourceType === 'ai_estimate' ? 0.6 : 0.0),
             npxGVariance: aState ? aState.variance : 0.4,
@@ -112,11 +123,11 @@ export class IngestionService {
         };
 
         // 4. Standardize and Clean
-        const hRes = this.standardizeWithProvenance({ ...homeInput, name: homeTeam, npxGSequence: homeSequence }, {});
-        const aRes = this.standardizeWithProvenance({ ...awayInput, name: awayTeam, npxGSequence: awaySequence }, {});
+        const hRes = this.standardizeWithProvenance({ ...homeInput, name: homeTeam, npxGSequence: hRaw.npxGSequence }, {});
+        const aRes = this.standardizeWithProvenance({ ...awayInput, name: awayTeam, npxGSequence: aRaw.npxGSequence }, {});
 
         const context: MatchContext = {
-            weather: weather.condition.toUpperCase(),
+            weather: weather ? weather.condition.toUpperCase() : 'WEATHER_UNAVAILABLE',
             stakes: 'STANDARD',
             marketSentiment: 'NEUTRAL',
             tacticalDrift: 'STABLE',
@@ -129,7 +140,10 @@ export class IngestionService {
             homeInput,
             awayInput,
             context,
-            enrichment: { weather, odds },
+            enrichment: { 
+                weather: weather || { temp: 0, condition: 'UNAVAILABLE', precipitation: 0 }, 
+                odds: odds || null // Explicitly null if unavailable
+            },
             provenance: {
                 source: hSourceType === 'real_provider' ? 'FootballDataCSV' : (hSourceType === 'ai_estimate' ? 'GeminiEstimator' : 'Insufficient'),
                 purity: (homeInput.sourceConfidence + awayInput.sourceConfidence) / 2
