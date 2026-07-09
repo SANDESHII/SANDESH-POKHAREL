@@ -3,10 +3,14 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { performAnalysis } from "./geminiService";
 import { BacktestService } from "./src/services/backtestService";
+import { LogisticEnsemble } from "./src/ensemble/secondModel";
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Initialize Models
+  await LogisticEnsemble.load().catch(e => console.error("[SERVER] Model Load Error:", e));
 
   app.use(express.json());
 

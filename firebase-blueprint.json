@@ -11,6 +11,17 @@
           }
         }
       }
+    },
+    "modelMetadata": {
+      "documents": {
+        "modelId": {
+          "fields": {
+            "weights": "array",
+            "lastTrained": "string",
+            "mse": "number"
+          }
+        }
+      }
     }
   }
 }

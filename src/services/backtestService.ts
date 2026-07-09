@@ -50,6 +50,7 @@ export interface BacktestSummary {
 
 import { EdgeCalculator } from '../market/edgeCalculator';
 import { DixonColes } from '../core/dixonColes';
+import { LogisticEnsemble } from '../ensemble/secondModel';
 
 export class BacktestService {
     private static parseCSV(csv: string): HistoricalMatch[] {
@@ -129,6 +130,15 @@ export class BacktestService {
 
         const rhoData = DixonColes.fitRho(fitInputs);
         console.log(`[BACKTEST] Fitted Rho: ${rhoData.rho.toFixed(4)}`);
+
+        // 1. Train LogisticEnsemble on a training set (first 100 matches)
+        const trainingMatches = allMatches.slice(0, 100).map(m => ({
+            home: IngestionService.standardize({ ...getTeamBaseline(m.homeTeam), name: m.homeTeam }, { adjustmentA: 1, adjustmentB: 1 }),
+            away: IngestionService.standardize({ ...getTeamBaseline(m.awayTeam), name: m.awayTeam }, { adjustmentA: 1, adjustmentB: 1 }),
+            context: m.context,
+            isOver15: (m.actualScore[0] + m.actualScore[1]) > 1.5
+        }));
+        await LogisticEnsemble.train(trainingMatches);
         
         const results: BacktestSummary["matches"] = [];
         let totalBrier = 0;
