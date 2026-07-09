@@ -1,10 +1,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { MatchEngine } from "./src/services/engine";
 import { IngestionService } from "./src/services/ingestionService";
-import { StateStore } from "./src/core/kalman";
-import { PersistenceService } from "./src/services/persistenceService";
 import { getTeamBaseline } from "./src/services/baselineDataService";
-import { AnalysisResult } from "./src/types";
+import { AnalysisResult, MatchContext } from "./src/types";
+import { TeamMatchInput } from "./src/ingestion/schema";
+import { LiveOddsProvider } from "./src/ingestion/sources/liveOddsProvider";
+import { WeatherProvider } from "./src/ingestion/sources/weatherProvider";
 
 const PRIMARY_MODEL = 'gemini-3.5-flash'; 
 const SECONDARY_MODEL = 'gemini-flash-latest';
@@ -114,24 +115,46 @@ const generateAnalysisPrompt = (req: any, baselines: any, date: string) => `
     4. SUMMARY: Write a plain English description of how the match will play out based on YOUR REAL-TIME FINDINGS.
     5. REPORT: Return the JSON report including the 'sources' and specific player news.`;
 
-    const generateFallbackAnalysis = async (req: any, rhoData?: { rho: number, sigmaRho: number }): Promise<AnalysisResult> => {
-    const home = getTeamBaseline(req.homeTeam);
-    const away = getTeamBaseline(req.awayTeam);
-    const hP = IngestionService.standardize({ ...home, name: req.homeTeam }, { adjustmentA: 1, adjustmentB: 1 });
-    const aP = IngestionService.standardize({ ...away, name: req.awayTeam }, { adjustmentA: 1, adjustmentB: 1 });
-    const context = { 
-        weather: (req.homeTeam.length % 2 === 0) ? "RAIN" : "OVERCAST", 
-        stakes: (req.homeTeam.length > 10) ? "CRITICAL" : "STANDARD", 
-        marketSentiment: (req.awayTeam.length % 2 === 0) ? "BULLISH" : "NEUTRAL", 
-        tacticalDrift: (req.homeTeam.length + req.awayTeam.length > 25) ? "VOLATILE" : "STABLE",
+    const getBaseline = (teamId: string): TeamMatchInput => {
+    const b = getTeamBaseline(teamId);
+    return {
+        teamId,
+        npxG: b.npxG,
+        npxGA: b.avgXGA,
+        sourceType: 'insufficient',
+        sourceConfidence: b.purity,
+        fetchedAt: new Date().toISOString()
+    };
+};
+
+const generateFallbackAnalysis = async (
+    req: any, 
+    rhoData?: { rho: number, sigmaRho: number },
+    marketOdds?: { over15: number, under35: number }
+): Promise<AnalysisResult> => {
+    const baselines = { 
+        home: getBaseline(req.homeTeam), 
+        away: getBaseline(req.awayTeam) 
+    };
+
+    const hP = IngestionService.standardize({ ...baselines.home, name: req.homeTeam }, { adjustmentA: 1, adjustmentB: 1 });
+    const aP = IngestionService.standardize({ ...baselines.away, name: req.awayTeam }, { adjustmentA: 1, adjustmentB: 1 });
+    
+    const context: MatchContext = { 
+        weather: "OVERCAST", 
+        stakes: "STANDARD", 
+        marketSentiment: "NEUTRAL", 
+        tacticalDrift: "STABLE",
         date: new Date().toISOString().split('T')[0]
     };
 
-    const math = MatchEngine.calculateMatchExpectancy(hP, aP, context, undefined, rhoData);
+    const rhoDataFinal = rhoData || { rho: -0.11, sigmaRho: 0.05 };
+
+    const math = MatchEngine.calculateMatchExpectancy(hP, aP, context, marketOdds, rhoDataFinal);
     const verifiedPath = math.verifiedOptimalPath!;
 
     const summary = math.purity < 40 
-        ? `The match analysis is currently running on heuristic baseline data as no real-time signals could be verified for ${req.homeTeam} or ${req.awayTeam}. Prediction relies on statistical name-hash physics (${math.purity}% signal purity).`
+        ? `Analysis for ${req.homeTeam} vs ${req.awayTeam} is running on structural league-average baselines as no real-time tactical signals could be verified. Expectancy is derived from global scoring distributions (${math.purity}% signal purity).`
         : math.summary;
 
     return {
@@ -146,35 +169,38 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
     const cachedEntry = cache.get(cacheKey);
     if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_TTL)) return cachedEntry.result;
 
+    const date = new Date().toISOString().split('T')[0];
+    
+    // THE DRIVESHAFT: Fetch real-time signals (Context, Odds, Weather) in parallel
+    SystemLog(`Ingesting real-time signals for ${req.homeTeam} vs ${req.awayTeam}...`);
+    const [leagueContext, liveOdds, liveWeather] = await Promise.all([
+        IngestionService.getLeagueContext(req.league || 'EPL').catch(() => ({ rhoData: { rho: -0.11, sigmaRho: 0.05 } })),
+        LiveOddsProvider.getOdds(req.league || 'EPL', `${req.homeTeam}-${req.awayTeam}`).catch(() => null),
+        WeatherProvider.getForecast(51.5, -0.1, date).catch(() => null)
+    ]);
+
+    const marketOdds = liveOdds && liveOdds.over15 && liveOdds.under35
+        ? { over15: liveOdds.over15, under35: liveOdds.under35 }
+        : undefined;
+
     const ai = getAI();
     let retryCount = 0;
     
-    // Fetch league context once for both AI and Fallback paths
-    const leagueContext = await IngestionService.getLeagueContext(req.league || 'EPL').catch(() => ({ rhoData: { rho: -0.11, sigmaRho: 0.05 } }));
-
     const attemptAnalysis = async (modelName: string): Promise<AnalysisResult | null> => {
         try {
-            SystemLog(`Probing: ${modelName}`);
+            SystemLog(`Probing Tactical Layer: ${modelName}`);
             
-            // Increased exponential backoff for 429 resilience
             if (retryCount > 0) {
-                const waitTime = Math.pow(4, retryCount) * 1000; // 4s, 16s
+                const waitTime = Math.pow(4, retryCount) * 1000;
                 SystemLog(`Backoff: waiting ${waitTime}ms...`);
                 await sleep(waitTime);
             }
 
-            const baselines = { home: getTeamBaseline(req.homeTeam), away: getTeamBaseline(req.awayTeam) };
+            const baselines = { 
+                home: getBaseline(req.homeTeam), 
+                away: getBaseline(req.awayTeam) 
+            };
             
-            // Load latent states
-            const [hState, aState] = await Promise.all([
-                PersistenceService.getTeamState(req.homeTeam),
-                PersistenceService.getTeamState(req.awayTeam)
-            ]);
-            
-            if (hState) await StateStore.set(req.homeTeam, hState);
-            if (aState) await StateStore.set(req.awayTeam, aState);
-
-            const date = new Date().toISOString().split('T')[0];
             const response = await ai.models.generateContent({
                 model: modelName,
                 contents: [{ role: "user", parts: [{ text: generateAnalysisPrompt(req, baselines, date) }] }],
@@ -192,24 +218,43 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
             const sources = grounding.map((chunk: any) => chunk.web?.uri).filter(Boolean);
             const normalize = (s: string | undefined, fallback: string) => (s && s.length > 2) ? s.trim().toUpperCase() : fallback;
 
-            const hD = IngestionService.standardize({ ...parsed.home, npxGVariance: hState?.variance || 0.4 }, parsed.adjustment);
-            const aD = IngestionService.standardize({ ...parsed.away, npxGVariance: aState?.variance || 0.4 }, parsed.adjustment);
-            const context = {
-                weather: normalize(parsed.context?.weather, "STANDARD"),
+            // COMBINE: Structural Ingested Data + Tactical AI Adjustments
+            const hD = IngestionService.standardize({ 
+                ...parsed.home, 
+                npxGVariance: baselines.home.npxGVariance || 0.4,
+                dataPurity: baselines.home.sourceConfidence || 0.5
+            }, parsed.adjustment);
+
+            const aD = IngestionService.standardize({ 
+                ...parsed.away, 
+                npxGVariance: baselines.away.npxGVariance || 0.4,
+                dataPurity: baselines.away.sourceConfidence || 0.5
+            }, parsed.adjustment);
+
+            const context: MatchContext = {
+                weather: liveWeather?.weather || normalize(parsed.context?.weather, "STANDARD"),
                 stakes: normalize(parsed.context?.matchContextFlag, "STANDARD"),
                 marketSentiment: normalize(parsed.context?.marketSentiment, "NEUTRAL"),
                 tacticalDrift: normalize(parsed.context?.tacticalDrift, "STABLE"),
                 date
             };
 
-            const math = MatchEngine.calculateMatchExpectancy(hD, aD, context, undefined, leagueContext.rhoData);
+            // CONNECT: Pass real-time signals and fitted rhoData
+            const rhoData = leagueContext.rhoData;
+
+            const math = MatchEngine.calculateMatchExpectancy(hD, aD, context, marketOdds, rhoData);
             const verifiedPath = math.verifiedOptimalPath!;
             
             const finalResult: AnalysisResult = {
                 ...math,
                 summary: parsed.matchSummary || math.summary,
                 surety: MatchEngine.calculateConfidenceAudit(math.probability / 100, verifiedPath.likelihood, math.purity),
-                sources: sources.length > 0 ? sources : undefined
+                sources: sources.length > 0 ? sources : undefined,
+                realTimeData: {
+                    homeLineup: parsed.homeLineup,
+                    awayLineup: parsed.awayLineup,
+                    tacticalShift: parsed.tacticalShift
+                }
             };
 
             cache.set(cacheKey, { result: finalResult, timestamp: Date.now() });
@@ -218,7 +263,7 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
             const isQuotaError = e.message?.includes("429") || e.message?.includes("RESOURCE_EXHAUSTED");
             if (isQuotaError) {
                 SystemLog(`CAPACITY_PEAK_REACHED`);
-                throw e; // Rethrow to abort model rotation and trigger fallback strategy
+                throw e; 
             }
             SystemLog(`REQUEST_FAILED: ${e.message}`);
             return null;
@@ -241,8 +286,9 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
     
     if (!result) {
         SystemLog("Activating strategic fallback engine (Nuclear Fortress).");
+        return await generateFallbackAnalysis(req, leagueContext.rhoData, marketOdds);
     }
     
-    return result || await generateFallbackAnalysis(req, leagueContext.rhoData);
+    return result;
 };
 

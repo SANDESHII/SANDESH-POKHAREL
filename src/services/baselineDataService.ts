@@ -47,14 +47,13 @@ export function getTeamBaseline(teamName: string): TeamBaseline {
     const found = TEAM_BASELINES[teamName];
     if (found) return found;
 
-    // Fallback: Name-hash generation (DANGEROUS - Priority 1 criticism)
-    const hash = teamName.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    // Fallback: League Average Baseline (Replaced hash-based heuristic)
     return {
-        npxG: 1.2 + (hash % 50) / 100,
-        xT: 1.1 + (hash % 30) / 100,
-        avgXG: 1.3 + (hash % 40) / 100,
-        avgXGA: 1.4 + (hash % 20) / 100,
-        cleanSheets: hash % 10,
-        purity: 0.2 // LOW PURITY for heuristic fallbacks
+        npxG: 1.35,
+        xT: 1.25,
+        avgXG: 1.45,
+        avgXGA: 1.45,
+        cleanSheets: 8,
+        purity: 0.15 // LOW PURITY indicator for unknown teams
     };
 }
