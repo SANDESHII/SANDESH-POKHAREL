@@ -1,3 +1,4 @@
+import Papa from 'papaparse';
 import { RawMatchData } from '../schema';
 import { IngestionCache } from '../cache';
 import { IngestionRetry } from '../retry';
@@ -34,21 +35,32 @@ export class FootballDataProvider {
         const url = `${this.BASE_URL}/${seasonCode}/${leagueCode}.csv`;
 
         const result = await IngestionRetry.execute(async () => {
-            console.log(`Fetching historical data from ${url}`);
+            console.log(`[INGEST] Fetching historical data from ${url}`);
             const response = await fetchWithTimeout(url);
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             
-            // In a real system, we would parse CSV here.
-            // For this simulation, we'll imagine we have rows and validate them.
-            const rows: any[] = []; 
-            const validated = rows
+            const csvText = await response.text();
+            
+            // PapaParse handles CSV to JSON conversion
+            const parsed = Papa.parse(csvText, {
+                header: true,
+                skipEmptyLines: true,
+                dynamicTyping: true
+            });
+
+            if (parsed.errors.length > 0) {
+                console.warn(`[INGEST] CSV Parsing errors for ${league}:`, parsed.errors);
+            }
+
+            const validated = parsed.data
                 .map(r => IngestionValidator.validateRawMatch(r, league, season))
                 .filter((r): r is RawMatchData => r !== null);
 
+            console.log(`[INGEST] Successfully validated ${validated.length}/${parsed.data.length} rows for ${league}`);
             return validated;
         }, `FootballDataCSV_${league}`);
 
-        if (result) {
+        if (result && result.length > 0) {
             IngestionCache.set(cacheKey, result, IngestionCache.MATCH_DATA_TTL);
             return result;
         }

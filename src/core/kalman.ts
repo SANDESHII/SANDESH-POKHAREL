@@ -15,6 +15,11 @@ export interface TeamState {
 export class SignalFilter {
     private static readonly Q_BASE = 0.05; // Base drift per week
     private static readonly R_BASE = 0.20; // Base distrust for high-fidelity data
+    private static collectionName = 'teamStates';
+
+    static setCollection(name: string): void {
+        this.collectionName = name;
+    }
 
     /**
      * KALMAN UPDATE
@@ -62,16 +67,27 @@ export class SignalFilter {
     }
 
     static async updateStateAfterMatch(teamId: string, goalsScored: number, _goalsConceded: number, date: string, confidence: number = 1.0): Promise<void> {
-        await this.update(teamId, goalsScored, date, confidence);
+        /**
+         * SCALE MAPPING (Goals to npxG Signal)
+         * Raw goals are noisy discrete measurements. We map them to the npxG scale (0.8 - 2.3)
+         * to prevent a single high-scoring match from over-tilting the latent estimate.
+         */
+        const npxGSignal = 0.8 + (Math.min(5, goalsScored) * 0.3);
+        
+        // We use a lower default confidence for "Goal" measurements than for "xG" measurements
+        // because goals have higher Poisson variance than xG.
+        const goalConfidence = confidence * 0.7; 
+        
+        await this.update(teamId, npxGSignal, date, goalConfidence);
     }
 
     static async get(teamId: string): Promise<TeamState | undefined> {
         try {
             const db = getFirebaseDb();
-            const doc = await db.collection('teamStates').doc(teamId).get();
+            const doc = await db.collection(this.collectionName).doc(teamId).get();
             return doc.exists ? (doc.data() as TeamState) : undefined;
         } catch (e) {
-            console.error('[KALMAN] Error reading from Firestore:', e);
+            console.error(`[KALMAN] Error reading from ${this.collectionName}:`, e);
             return undefined;
         }
     }
@@ -79,23 +95,23 @@ export class SignalFilter {
     static async set(teamId: string, state: TeamState): Promise<void> {
         try {
             const db = getFirebaseDb();
-            await db.collection('teamStates').doc(teamId).set(state);
+            await db.collection(this.collectionName).doc(teamId).set(state);
         } catch (e) {
-            console.error('[KALMAN] Error writing to Firestore:', e);
+            console.error(`[KALMAN] Error writing to ${this.collectionName}:`, e);
         }
     }
 
     static async getAll(): Promise<Map<string, TeamState>> {
         try {
             const db = getFirebaseDb();
-            const snapshot = await db.collection('teamStates').get();
+            const snapshot = await db.collection(this.collectionName).get();
             const map = new Map<string, TeamState>();
             snapshot.forEach(doc => {
                 map.set(doc.id, doc.data() as TeamState);
             });
             return map;
         } catch (e) {
-            console.error('[KALMAN] Error reading collection from Firestore:', e);
+            console.error(`[KALMAN] Error reading collection ${this.collectionName} from Firestore:`, e);
             return new Map();
         }
     }
@@ -103,14 +119,15 @@ export class SignalFilter {
     static async reset(): Promise<void> {
         try {
             const db = getFirebaseDb();
-            const snapshot = await db.collection('teamStates').get();
+            const snapshot = await db.collection(this.collectionName).get();
             const batch = db.batch();
             snapshot.forEach(doc => {
                 batch.delete(doc.ref);
             });
             await batch.commit();
+            console.log(`[KALMAN] Reset collection: ${this.collectionName}`);
         } catch (e) {
-            console.error('[KALMAN] Error resetting Firestore collection:', e);
+            console.error(`[KALMAN] Error resetting Firestore collection ${this.collectionName}:`, e);
         }
     }
 

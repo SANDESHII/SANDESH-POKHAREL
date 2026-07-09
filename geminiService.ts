@@ -114,7 +114,7 @@ const generateAnalysisPrompt = (req: any, baselines: any, date: string) => `
     4. SUMMARY: Write a plain English description of how the match will play out based on YOUR REAL-TIME FINDINGS.
     5. REPORT: Return the JSON report including the 'sources' and specific player news.`;
 
-    const generateFallbackAnalysis = (req: any): AnalysisResult => {
+    const generateFallbackAnalysis = async (req: any, rhoData?: { rho: number, sigmaRho: number }): Promise<AnalysisResult> => {
     const home = getTeamBaseline(req.homeTeam);
     const away = getTeamBaseline(req.awayTeam);
     const hP = IngestionService.standardize({ ...home, name: req.homeTeam }, { adjustmentA: 1, adjustmentB: 1 });
@@ -123,10 +123,11 @@ const generateAnalysisPrompt = (req: any, baselines: any, date: string) => `
         weather: (req.homeTeam.length % 2 === 0) ? "RAIN" : "OVERCAST", 
         stakes: (req.homeTeam.length > 10) ? "CRITICAL" : "STANDARD", 
         marketSentiment: (req.awayTeam.length % 2 === 0) ? "BULLISH" : "NEUTRAL", 
-        tacticalDrift: (req.homeTeam.length + req.awayTeam.length > 25) ? "VOLATILE" : "STABLE" 
+        tacticalDrift: (req.homeTeam.length + req.awayTeam.length > 25) ? "VOLATILE" : "STABLE",
+        date: new Date().toISOString().split('T')[0]
     };
 
-    const math = MatchEngine.calculateMatchExpectancy(hP, aP, context);
+    const math = MatchEngine.calculateMatchExpectancy(hP, aP, context, undefined, rhoData);
     const verifiedPath = math.verifiedOptimalPath!;
 
     const summary = math.purity < 40 
@@ -147,6 +148,9 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
 
     const ai = getAI();
     let retryCount = 0;
+    
+    // Fetch league context once for both AI and Fallback paths
+    const leagueContext = await IngestionService.getLeagueContext(req.league || 'EPL').catch(() => ({ rhoData: { rho: -0.11, sigmaRho: 0.05 } }));
 
     const attemptAnalysis = async (modelName: string): Promise<AnalysisResult | null> => {
         try {
@@ -161,13 +165,14 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
 
             const baselines = { home: getTeamBaseline(req.homeTeam), away: getTeamBaseline(req.awayTeam) };
             
-            // Load latent states from persistence
+            // Load latent states
             const [hState, aState] = await Promise.all([
                 PersistenceService.getTeamState(req.homeTeam),
                 PersistenceService.getTeamState(req.awayTeam)
             ]);
-            if (hState) StateStore.set(req.homeTeam, hState);
-            if (aState) StateStore.set(req.awayTeam, aState);
+            
+            if (hState) await StateStore.set(req.homeTeam, hState);
+            if (aState) await StateStore.set(req.awayTeam, aState);
 
             const date = new Date().toISOString().split('T')[0];
             const response = await ai.models.generateContent({
@@ -193,10 +198,11 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
                 weather: normalize(parsed.context?.weather, "STANDARD"),
                 stakes: normalize(parsed.context?.matchContextFlag, "STANDARD"),
                 marketSentiment: normalize(parsed.context?.marketSentiment, "NEUTRAL"),
-                tacticalDrift: normalize(parsed.context?.tacticalDrift, "STABLE")
+                tacticalDrift: normalize(parsed.context?.tacticalDrift, "STABLE"),
+                date
             };
 
-            const math = MatchEngine.calculateMatchExpectancy(hD, aD, context);
+            const math = MatchEngine.calculateMatchExpectancy(hD, aD, context, undefined, leagueContext.rhoData);
             const verifiedPath = math.verifiedOptimalPath!;
             
             const finalResult: AnalysisResult = {
@@ -237,6 +243,6 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
         SystemLog("Activating strategic fallback engine (Nuclear Fortress).");
     }
     
-    return result || generateFallbackAnalysis(req);
+    return result || await generateFallbackAnalysis(req, leagueContext.rhoData);
 };
 

@@ -56,6 +56,7 @@ export interface StandardizedInput {
     awayInput: TeamMatchInput;
     context: MatchContext;
     enrichment: EnrichmentData;
+    rhoData?: { rho: number; sigmaRho: number };
     provenance: {
         source: string;
         purity: number;

@@ -102,7 +102,33 @@ export class BacktestService {
         const samples = allMatches.slice(0, 200);
         
         // Reset state for clean walk-forward
+        StateStore.setCollection('backtest_teamStates');
+        PersistenceService.setCollection('backtest_teamStates');
         await StateStore.reset();
+
+        // 0. Pre-calculate Rho for the backtest period
+        const teamAvgs = new Map<string, { scored: number, count: number }>();
+        allMatches.forEach(m => {
+            const h = teamAvgs.get(m.homeTeam) || { scored: 0, count: 0 };
+            h.scored += m.actualScore[0];
+            h.count++;
+            teamAvgs.set(m.homeTeam, h);
+
+            const a = teamAvgs.get(m.awayTeam) || { scored: 0, count: 0 };
+            a.scored += m.actualScore[1];
+            a.count++;
+            teamAvgs.set(m.awayTeam, a);
+        });
+
+        const fitInputs = allMatches.map(m => ({
+            x: m.actualScore[0],
+            y: m.actualScore[1],
+            lambda: teamAvgs.get(m.homeTeam)!.scored / teamAvgs.get(m.homeTeam)!.count,
+            mu: teamAvgs.get(m.awayTeam)!.scored / teamAvgs.get(m.awayTeam)!.count
+        }));
+
+        const rhoData = DixonColes.fitRho(fitInputs);
+        console.log(`[BACKTEST] Fitted Rho: ${rhoData.rho.toFixed(4)}`);
         
         const results: BacktestSummary["matches"] = [];
         let totalBrier = 0;
@@ -160,7 +186,7 @@ export class BacktestService {
             const aD = IngestionService.standardize(ingested.away, ingested.adjustment);
             
             // 1. Predict
-            const math = MatchEngine.calculateMatchExpectancy(hD, aD, { ...match.context, date: match.date });
+            const math = MatchEngine.calculateMatchExpectancy(hD, aD, { ...match.context, date: match.date }, undefined, rhoData);
             
             const totalGoals = match.actualScore[0] + match.actualScore[1];
             const isOver15 = totalGoals > 1.5;
@@ -172,7 +198,6 @@ export class BacktestService {
             let marketEdge = 0;
             if (match.odds) {
                 // Calculate model's Over 2.5 prob for market comparison
-                const rhoData = DixonColes.fitRho([]); // Simplified
                 const hScoring = hD.npxG * (1 / aD.defensiveStability);
                 const aScoring = aD.npxG * (1 / hD.defensiveStability);
                 const matrix = DixonColes.calculateScoreMatrix(hScoring, aScoring, rhoData.rho);
@@ -228,6 +253,10 @@ export class BacktestService {
 
         // Persist the final latent states to Firestore after the walk-forward is complete (StateStore already does this per update, but we keep this for compatibility or batch safety)
         await PersistenceService.saveTeamStates(await StateStore.getAll());
+
+        // Restore production collection names
+        StateStore.setCollection('teamStates');
+        PersistenceService.setCollection('teamStates');
 
         return {
             totalMatches: samples.length,

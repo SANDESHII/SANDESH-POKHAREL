@@ -4,9 +4,10 @@ import { FootballDataProvider } from '../ingestion/sources/footballDataProvider'
 import { LiveOddsProvider } from '../ingestion/sources/liveOddsProvider';
 import { WeatherProvider } from '../ingestion/sources/weatherProvider';
 import { GeminiEstimator } from '../ingestion/sources/geminiEstimator';
-import { StandardizedInput, TeamMatchInput } from '../ingestion/schema';
+import { StandardizedInput, TeamMatchInput, RawMatchData } from '../ingestion/schema';
 
 import { StateStore } from '../core/kalman';
+import { DixonColes } from '../core/dixonColes';
 
 /**
  * INGESTION SERVICE
@@ -26,6 +27,53 @@ export class IngestionService {
     }
 
     /**
+     * Provides league-wide metrics like rhoData from historical matches.
+     */
+    static async getLeagueContext(league: string): Promise<{ rhoData: { rho: number, sigmaRho: number }, matches: RawMatchData[] }> {
+        const historicalData = await FootballDataProvider.fetchSeasonData(league, '23/24');
+        let rhoData = { rho: -0.11, sigmaRho: 0.05 };
+
+        if (historicalData.length > 50) {
+            const teamAvgs = new Map<string, { scored: number, conceded: number, count: number }>();
+            historicalData.forEach(m => {
+                if (m.homeGoals === undefined || m.awayGoals === undefined) return;
+                
+                const h = teamAvgs.get(m.homeTeam) || { scored: 0, conceded: 0, count: 0 };
+                h.scored += m.homeGoals;
+                h.conceded += m.awayGoals;
+                h.count++;
+                teamAvgs.set(m.homeTeam, h);
+
+                const a = teamAvgs.get(m.awayTeam) || { scored: 0, conceded: 0, count: 0 };
+                a.scored += m.awayGoals;
+                a.conceded += m.homeGoals;
+                a.count++;
+                teamAvgs.set(m.awayTeam, a);
+            });
+
+            const fitInputs = historicalData
+                .filter(m => m.homeGoals !== undefined && m.awayGoals !== undefined)
+                .map(m => {
+                    const hStats = teamAvgs.get(m.homeTeam)!;
+                    const aStats = teamAvgs.get(m.awayTeam)!;
+                    return {
+                        x: m.homeGoals!,
+                        y: m.awayGoals!,
+                        lambda: hStats.scored / hStats.count,
+                        mu: aStats.scored / aStats.count
+                    };
+                })
+                .slice(-200);
+
+            if (fitInputs.length > 20) {
+                rhoData = DixonColes.fitRho(fitInputs);
+            }
+        }
+
+        return { rhoData, matches: historicalData };
+    }
+
+    /**
      * MAIN ENTRY POINT for full-stack ingestion
      * Implements priority: Real Providers -> AI Estimate -> Insufficient
      */
@@ -35,14 +83,16 @@ export class IngestionService {
         league: string, 
         date: string
     ): Promise<StandardizedInput> {
-        // 1. Fetch Parallel Enrichment with explicit fallback tiers
-        const [historicalData, odds, weather] = await Promise.all([
-            FootballDataProvider.fetchSeasonData(league, '23/24'),
+        // 1. Fetch Parallel Enrichment & League Context
+        const [leagueContext, odds, weather] = await Promise.all([
+            this.getLeagueContext(league),
             LiveOddsProvider.getOdds(league, `${homeTeam}-${awayTeam}`),
             WeatherProvider.getForecast(51.5, -0.1, date)
         ]);
 
-        // 2. Fallback Chain for Team Stats
+        const { rhoData, matches: historicalData } = leagueContext;
+
+        // 3. Fallback Chain for Team Stats
         const getTeamStatsChain = async (teamId: string): Promise<{ stats: any, sourceType: 'real_provider' | 'ai_estimate' | 'insufficient' }> => {
             // Tier 1: Real historical matches for this specific team
             const teamMatches = historicalData.filter(m => m.homeTeam === teamId || m.awayTeam === teamId);
@@ -136,6 +186,7 @@ export class IngestionService {
                 weather: weather || { temp: 0, condition: 'UNAVAILABLE', precipitation: 0 }, 
                 odds: odds || null // Explicitly null if unavailable
             },
+            rhoData,
             provenance: {
                 source: hSourceType === 'real_provider' ? 'FootballDataCSV' : (hSourceType === 'ai_estimate' ? 'GeminiEstimator' : 'Insufficient'),
                 purity: (homeInput.sourceConfidence + awayInput.sourceConfidence) / 2

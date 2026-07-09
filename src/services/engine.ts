@@ -20,14 +20,14 @@ export class MatchEngine {
         home: TeamStats, 
         away: TeamStats, 
         context: MatchContext,
-        marketOdds?: { over15: number; under35: number }
+        marketOdds?: { over15: number; under35: number },
+        rhoData: { rho: number, sigmaRho: number } = { rho: -0.11, sigmaRho: 0.05 }
     ): AnalysisResult {
         // 1. Initial Goal Expectancy (Lambda/Mu)
         const hScoring = home.npxG * (1 / away.defensiveStability);
         const aScoring = away.npxG * (1 / home.defensiveStability);
         
         // 2. Statistical Core (Dixon-Coles Matrix)
-        const rhoData = DixonColes.fitRho([]); // TODO: In production, pass the last 200 league matches here
         const { rho, sigmaRho } = rhoData;
         const matrix = DixonColes.calculateScoreMatrix(hScoring, aScoring, rho);
         

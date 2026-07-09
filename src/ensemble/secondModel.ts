@@ -26,12 +26,11 @@ export class LogisticEnsemble {
      * Extracts features from the match context
      */
     private static extractFeatures(home: TeamStats, away: TeamStats, context: MatchContext): number[] {
-        const homeGF = home.form ? home.form.reduce((a, b) => a + b, 0) : 1.5;
-        const awayGF = away.form ? away.form.reduce((a, b) => a + b, 0) : 1.3;
+        const homeGF = home.form && home.form.length > 0 ? (home.form.reduce((a, b) => a + b, 0) / home.form.length) : (home.npxG || 1.35);
+        const awayGF = away.form && away.form.length > 0 ? (away.form.reduce((a, b) => a + b, 0) / away.form.length) : (away.npxG || 1.35);
         
-        // Mocking GA for now as it's not in the current Team interface explicitly as a list
-        const homeGA = 1.2; 
-        const awayGA = 1.4;
+        const homeGA = home.avgXGA || 1.35; 
+        const awayGA = away.avgXGA || 1.35;
 
         return [
             1, // Bias
