@@ -232,7 +232,7 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
             }, parsed.adjustment);
 
             const context: MatchContext = {
-                weather: liveWeather?.weather || normalize(parsed.context?.weather, "STANDARD"),
+                weather: liveWeather?.condition || normalize(parsed.context?.weather, "STANDARD"),
                 stakes: normalize(parsed.context?.matchContextFlag, "STANDARD"),
                 marketSentiment: normalize(parsed.context?.marketSentiment, "NEUTRAL"),
                 tacticalDrift: normalize(parsed.context?.tacticalDrift, "STABLE"),

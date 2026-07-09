@@ -38,30 +38,48 @@ export class IngestionValidator {
         }
     }
 
-    static validateOdds(raw: any): { home: number, draw: number, away: number, over15?: number } | null {
+    static validateOdds(raw: any): { home: number, draw: number, away: number, over15?: number, under35?: number } | null {
         try {
             if (!raw || typeof raw !== 'object') return null;
             
-            // Expected format from The Odds API (simplified for this validation)
-            // find h2h market
-            const bookmakers = raw.bookmakers || [];
+            // The Odds API returns an array of matches or a single match object depending on the endpoint
+            // Our LiveOddsProvider currently handles single match data passing (or the first element if it's an array)
+            const match = Array.isArray(raw) ? raw[0] : raw;
+            if (!match) return null;
+
+            const bookmakers = match.bookmakers || [];
             if (bookmakers.length === 0) return null;
             
             const firstBookie = bookmakers[0];
-            const h2hMarket = firstBookie.markets?.find((m: any) => m.key === 'h2h');
+            const markets = firstBookie.markets || [];
+
+            // 1. Parse H2H Market
+            const h2hMarket = markets.find((m: any) => m.key === 'h2h');
             if (!h2hMarket) return null;
 
-            const home = h2hMarket.outcomes.find((o: any) => o.name === raw.home_team)?.price;
-            const away = h2hMarket.outcomes.find((o: any) => o.name === raw.away_team)?.price;
+            const home = h2hMarket.outcomes.find((o: any) => o.name === match.home_team)?.price;
+            const away = h2hMarket.outcomes.find((o: any) => o.name === match.away_team)?.price;
             const draw = h2hMarket.outcomes.find((o: any) => o.name === 'Draw')?.price;
 
             if (!home || !away || !draw) return null;
 
-            return {
+            const result: any = {
                 home: Number(home),
                 draw: Number(draw),
                 away: Number(away)
             };
+
+            // 2. Parse Totals Market (Over 1.5 / Under 3.5)
+            const totalsMarket = markets.find((m: any) => m.key === 'totals');
+            if (totalsMarket) {
+                const over15 = totalsMarket.outcomes.find((o: any) => o.name === 'Over' && o.point === 1.5)?.price;
+                const under35 = totalsMarket.outcomes.find((o: any) => o.name === 'Under' && o.point === 3.5)?.price;
+                
+                if (over15) result.over15 = Number(over15);
+                if (under35) result.under35 = Number(under35);
+            }
+
+            return result;
         } catch (e) {
             console.error('[VALIDATOR] Failed to validate odds:', e);
             return null;
