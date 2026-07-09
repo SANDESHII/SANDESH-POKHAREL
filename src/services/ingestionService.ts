@@ -7,7 +7,6 @@ import { GeminiEstimator } from '../ingestion/sources/geminiEstimator';
 import { StandardizedInput, TeamMatchInput } from '../ingestion/schema';
 
 import { StateStore } from '../core/kalman';
-import { PersistenceService } from './persistenceService';
 
 /**
  * INGESTION SERVICE
@@ -89,18 +88,11 @@ export class IngestionService {
         const fetchedAt = new Date().toISOString();
         const LEAGUE_AVG = 1.35;
 
-        // Load latent states from persistence
-        if (!StateStore.get(homeTeam)) {
-            const hPersisted = await PersistenceService.getTeamState(homeTeam);
-            if (hPersisted) StateStore.set(homeTeam, hPersisted);
-        }
-        if (!StateStore.get(awayTeam)) {
-            const aPersisted = await PersistenceService.getTeamState(awayTeam);
-            if (aPersisted) StateStore.set(awayTeam, aPersisted);
-        }
-
-        const hState = StateStore.get(homeTeam);
-        const aState = StateStore.get(awayTeam);
+        // 3. Load latent states from StateStore (now Firestore-backed)
+        const [hState, aState] = await Promise.all([
+            StateStore.get(homeTeam),
+            StateStore.get(awayTeam)
+        ]);
 
         const homeInput: TeamMatchInput = {
             teamId: homeTeam,

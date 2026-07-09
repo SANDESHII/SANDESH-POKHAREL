@@ -102,7 +102,7 @@ export class BacktestService {
         const samples = allMatches.slice(0, 200);
         
         // Reset state for clean walk-forward
-        StateStore.reset();
+        await StateStore.reset();
         
         const results: BacktestSummary["matches"] = [];
         let totalBrier = 0;
@@ -135,8 +135,8 @@ export class BacktestService {
             
             // In walk-forward, we "ingest" data as it would have appeared
             // We use the latent estimated state if it exists, else baseline
-            const hState = StateStore.get(match.homeTeam);
-            const aState = StateStore.get(match.awayTeam);
+            const hState = await StateStore.get(match.homeTeam);
+            const aState = await StateStore.get(match.awayTeam);
 
             const ingested = {
                 home: {
@@ -222,12 +222,12 @@ export class BacktestService {
 
             // 4. Update Loop (Walk-Forward)
             // Update the StateStore with the ACTUAL observed result to influence future predictions
-            StateStore.updateStateAfterMatch(match.homeTeam, match.actualScore[0], match.actualScore[1], match.date);
-            StateStore.updateStateAfterMatch(match.awayTeam, match.actualScore[1], match.actualScore[0], match.date);
+            await StateStore.updateStateAfterMatch(match.homeTeam, match.actualScore[0], match.actualScore[1], match.date);
+            await StateStore.updateStateAfterMatch(match.awayTeam, match.actualScore[1], match.actualScore[0], match.date);
         }
 
-        // Persist the final latent states to Firestore after the walk-forward is complete
-        await PersistenceService.saveTeamStates(StateStore.getAll());
+        // Persist the final latent states to Firestore after the walk-forward is complete (StateStore already does this per update, but we keep this for compatibility or batch safety)
+        await PersistenceService.saveTeamStates(await StateStore.getAll());
 
         return {
             totalMatches: samples.length,

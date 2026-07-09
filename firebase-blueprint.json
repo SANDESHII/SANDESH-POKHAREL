@@ -1,17 +1,16 @@
 {
-  "collections": [
-    {
-      "path": "team_states",
-      "description": "Stores the latent ability (Kalman state) for each team.",
-      "documents": [
-        {
-          "teamId": "string",
-          "estimatedNpxG": "number",
-          "variance": "number",
-          "lastUpdate": "string",
-          "volatility": "number"
+  "collections": {
+    "teamStates": {
+      "documents": {
+        "teamId": {
+          "fields": {
+            "estimatedNpxG": "number",
+            "variance": "number",
+            "lastUpdate": "string",
+            "volatility": "number"
+          }
         }
-      ]
+      }
     }
-  ]
+  }
 }

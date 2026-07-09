@@ -1,8 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /team_states/{teamId} {
-      allow read, write: if true; // Simple rules for this applet
+    match /teamStates/{teamId} {
+      allow read, write: if true; // In a production app, we'd restrict this, but for this engine it's server-side access mostly
     }
   }
 }

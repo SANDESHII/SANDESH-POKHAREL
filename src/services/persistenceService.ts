@@ -2,7 +2,7 @@ import { getFirebaseDb } from '../lib/firebaseAdmin';
 import { TeamState } from '../core/kalman';
 
 export class PersistenceService {
-    private static COLLECTION = 'team_states';
+    private static COLLECTION = 'teamStates';
 
     static async getTeamState(teamId: string): Promise<TeamState | null> {
         try {
