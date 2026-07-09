@@ -69,8 +69,9 @@ export interface MatchContext {
 export interface MarketData {
     odds: {
         over15: number;
-        under15: number; // Added
+        under15: number; 
         under35: number;
+        over35: number;
         homeWin: number;
         draw: number;
         awayWin: number;

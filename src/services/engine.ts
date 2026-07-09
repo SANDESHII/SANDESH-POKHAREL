@@ -20,7 +20,7 @@ export class MatchEngine {
         home: TeamStats, 
         away: TeamStats, 
         context: MatchContext,
-        marketOdds?: { over15: number; under35: number },
+        marketOdds?: { over15: number; under15: number; over35: number; under35: number },
         rhoData: { rho: number, sigmaRho: number } = { rho: -0.11, sigmaRho: 0.05 }
     ): AnalysisResult {
         // 1. Initial Goal Expectancy (Lambda/Mu)
@@ -80,9 +80,8 @@ export class MatchEngine {
         let marketData;
         let staking;
         if (marketOdds && !isInsufficient) {
-            marketData = EdgeCalculator.analyze(pOver15, {
+            marketData = EdgeCalculator.analyze(pOver15, pUnder35, {
                 ...marketOdds,
-                under15: 1 / (1 - 0.7), // Fallback if missing
                 homeWin: 1 / outcomes.home,
                 draw: 1 / outcomes.draw,
                 awayWin: 1 / outcomes.away

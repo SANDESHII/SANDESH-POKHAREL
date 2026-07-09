@@ -130,7 +130,7 @@ const generateAnalysisPrompt = (req: any, baselines: any, date: string) => `
 const generateFallbackAnalysis = async (
     req: any, 
     rhoData?: { rho: number, sigmaRho: number },
-    marketOdds?: { over15: number, under35: number }
+    marketOdds?: { over15: number; under15: number; over35: number; under35: number }
 ): Promise<AnalysisResult> => {
     const baselines = { 
         home: getBaseline(req.homeTeam), 
@@ -180,7 +180,12 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
     ]);
 
     const marketOdds = liveOdds && liveOdds.over15 && liveOdds.under35
-        ? { over15: liveOdds.over15, under35: liveOdds.under35 }
+        ? { 
+            over15: liveOdds.over15, 
+            under15: liveOdds.under15 || 1 / (1 - 0.7), // Fallback
+            over35: liveOdds.over35 || 1 / (1 - 0.15),  // Fallback
+            under35: liveOdds.under35 
+          }
         : undefined;
 
     const ai = getAI();

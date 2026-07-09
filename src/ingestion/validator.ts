@@ -38,7 +38,7 @@ export class IngestionValidator {
         }
     }
 
-    static validateOdds(raw: any): { home: number, draw: number, away: number, over15?: number, under35?: number } | null {
+    static validateOdds(raw: any): { home: number, draw: number, away: number, over15?: number, under15?: number, over35?: number, under35?: number } | null {
         try {
             if (!raw || typeof raw !== 'object') return null;
             
@@ -69,13 +69,17 @@ export class IngestionValidator {
                 away: Number(away)
             };
 
-            // 2. Parse Totals Market (Over 1.5 / Under 3.5)
+            // 2. Parse Totals Market (Over 1.5 / Under 3.5 etc)
             const totalsMarket = markets.find((m: any) => m.key === 'totals');
             if (totalsMarket) {
                 const over15 = totalsMarket.outcomes.find((o: any) => o.name === 'Over' && o.point === 1.5)?.price;
+                const under15 = totalsMarket.outcomes.find((o: any) => o.name === 'Under' && o.point === 1.5)?.price;
+                const over35 = totalsMarket.outcomes.find((o: any) => o.name === 'Over' && o.point === 3.5)?.price;
                 const under35 = totalsMarket.outcomes.find((o: any) => o.name === 'Under' && o.point === 3.5)?.price;
                 
                 if (over15) result.over15 = Number(over15);
+                if (under15) result.under15 = Number(under15);
+                if (over35) result.over35 = Number(over35);
                 if (under35) result.under35 = Number(under35);
             }
 
