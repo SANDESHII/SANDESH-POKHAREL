@@ -206,21 +206,41 @@ export const performAnalysis = async (req: any): Promise<AnalysisResult> => {
                 away: getBaseline(req.awayTeam) 
             };
             
-            const response = await ai.models.generateContent({
+            // Call 1: Perform Grounded Research (No JSON Schema)
+            SystemLog(`Performing Grounded Research: ${modelName}`);
+            const searchResponse = await ai.models.generateContent({
                 model: modelName,
                 contents: [{ role: "user", parts: [{ text: generateAnalysisPrompt(req, baselines, date) }] }],
                 config: { 
                     systemInstruction: SYSTEM_INSTRUCTION,
-                    responseMimeType: "application/json", 
-                    responseSchema: analysisSchema as any,
                     tools: [{ googleSearch: {} }] as any
                 }
             });
 
-            if (!response.text) return null;
-            const parsed = JSON.parse(response.text.trim());
-            const grounding = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+            const researchText = searchResponse.text;
+            if (!researchText) return null;
+
+            // Extract sources from the grounded call
+            const grounding = searchResponse.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
             const sources = grounding.map((chunk: any) => chunk.web?.uri).filter(Boolean);
+
+            // Call 2: Structure the research into the JSON schema (No Tools)
+            SystemLog(`Structuring Analysis: ${modelName}`);
+            const structureResponse = await ai.models.generateContent({
+                model: modelName,
+                contents: [{ 
+                    role: "user", 
+                    parts: [{ text: `Based on this research findings:\n\n${researchText}\n\nStructure it into the required JSON format for the match ${req.homeTeam} vs ${req.awayTeam}.` }] 
+                }],
+                config: { 
+                    systemInstruction: SYSTEM_INSTRUCTION,
+                    responseMimeType: "application/json", 
+                    responseSchema: analysisSchema as any
+                }
+            });
+
+            if (!structureResponse.text) return null;
+            const parsed = JSON.parse(structureResponse.text.trim());
             const normalize = (s: string | undefined, fallback: string) => (s && s.length > 2) ? s.trim().toUpperCase() : fallback;
 
             // COMBINE: Structural Ingested Data + Tactical AI Adjustments
