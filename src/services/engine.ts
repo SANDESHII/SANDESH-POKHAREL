@@ -12,6 +12,8 @@ import { KellyCriterion } from '../staking/kellyCriterion';
 import { LogisticEnsemble } from '../ensemble/secondModel';
 import { AgreementScorer } from '../ensemble/agreement';
 
+import { StatsCleaner } from '../cleaning/statsCleaner';
+
 export class MatchEngine {
     /**
      * MAIN PREDICTION PIPELINE
@@ -24,8 +26,8 @@ export class MatchEngine {
         rhoData: { rho: number, sigmaRho: number } = { rho: -0.11, sigmaRho: 0.05 }
     ): AnalysisResult {
         // 1. Initial Goal Expectancy (Lambda/Mu)
-        const hScoring = home.npxG * (1 / away.defensiveStability);
-        const aScoring = away.npxG * (1 / home.defensiveStability);
+        const hScoring = StatsCleaner.clamp(home.npxG * (1 / away.defensiveStability), 0.2, 6.0);
+        const aScoring = StatsCleaner.clamp(away.npxG * (1 / home.defensiveStability), 0.2, 6.0);
         
         // 2. Statistical Core (Dixon-Coles Matrix)
         const { rho, sigmaRho } = rhoData;

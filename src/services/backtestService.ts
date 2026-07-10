@@ -3,9 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { getTeamBaseline } from './baselineDataService';
 import { MatchEngine } from './engine';
-import { StateStore } from '../core/kalman';
+import { SignalFilter } from '../core/kalman';
 import { IngestionService } from './ingestionService';
-import { PersistenceService } from './persistenceService';
 import { MatchContext, AnalysisResult } from '../types';
 
 export interface HistoricalMatch {
@@ -103,9 +102,8 @@ export class BacktestService {
         const samples = allMatches.slice(0, 200);
         
         // Reset state for clean walk-forward
-        StateStore.setCollection('backtest_teamStates');
-        PersistenceService.setCollection('backtest_teamStates');
-        await StateStore.reset();
+        SignalFilter.setCollection('backtest_teamStates');
+        await SignalFilter.reset();
 
         // 0. Pre-calculate Rho for the backtest period
         const teamAvgs = new Map<string, { scored: number, count: number }>();
@@ -171,8 +169,8 @@ export class BacktestService {
             
             // In walk-forward, we "ingest" data as it would have appeared
             // We use the latent estimated state if it exists, else baseline
-            const hState = await StateStore.get(match.homeTeam);
-            const aState = await StateStore.get(match.awayTeam);
+            const hState = await SignalFilter.get(match.homeTeam);
+            const aState = await SignalFilter.get(match.awayTeam);
 
             const ingested = {
                 home: {
@@ -256,17 +254,16 @@ export class BacktestService {
             });
 
             // 4. Update Loop (Walk-Forward)
-            // Update the StateStore with the ACTUAL observed result to influence future predictions
-            await StateStore.updateStateAfterMatch(match.homeTeam, match.actualScore[0], match.actualScore[1], match.date);
-            await StateStore.updateStateAfterMatch(match.awayTeam, match.actualScore[1], match.actualScore[0], match.date);
+            // Update the SignalFilter with the ACTUAL observed result to influence future predictions
+            await SignalFilter.updateStateAfterMatch(match.homeTeam, match.actualScore[0], match.actualScore[1], match.date, 1.0, false);
+            await SignalFilter.updateStateAfterMatch(match.awayTeam, match.actualScore[1], match.actualScore[0], match.date, 1.0, false);
         }
 
-        // Persist the final latent states to Firestore after the walk-forward is complete (StateStore already does this per update, but we keep this for compatibility or batch safety)
-        await PersistenceService.saveTeamStates(await StateStore.getAll());
+        // Persist the final latent states to Firestore after the walk-forward is complete (SignalFilter already does this per update, but we keep this for compatibility or batch safety)
+        await SignalFilter.saveAll(await SignalFilter.getAll());
 
         // Restore production collection names
-        StateStore.setCollection('teamStates');
-        PersistenceService.setCollection('teamStates');
+        SignalFilter.setCollection('teamStates');
 
         return {
             totalMatches: samples.length,

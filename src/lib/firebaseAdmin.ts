@@ -37,10 +37,29 @@ export function getFirebaseDb(): Firestore {
       }
     }
 
-    app = initializeApp({
-      credential: serviceAccount ? cert(serviceAccount) : undefined,
-      projectId: config.projectId || process.env.GOOGLE_CLOUD_PROJECT
-    });
+    const options: any = {
+      projectId: config.projectId || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT
+    };
+
+    if (serviceAccount && Object.keys(serviceAccount).length > 0) {
+      try {
+        options.credential = cert(serviceAccount);
+      } catch (e) {
+        console.error('[FIREBASE] Error creating credential from service account:', e);
+      }
+    }
+
+    try {
+      app = initializeApp(options);
+    } catch (e) {
+      console.error('[FIREBASE] Error initializing Firebase Admin App with options:', options, e);
+      // Fallback to minimal initialization if possible
+      if (getApps().length > 0) {
+        app = getApps()[0];
+      } else {
+        app = initializeApp({ projectId: options.projectId || 'fallback-project-id' });
+      }
+    }
   } else {
     app = getApps()[0];
   }

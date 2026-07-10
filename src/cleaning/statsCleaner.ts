@@ -8,10 +8,10 @@ export interface Provenance {
 }
 
 /**
- * DATA CLEANING & VALIDATION LAYER
+ * STATS CLEANING & VALIDATION LAYER
  * Ensures input signals are within physical bounds and handles imputation.
  */
-export class DataValidator {
+export class StatsCleaner {
     /**
      * Z-Score Gating for outlier detection
      */

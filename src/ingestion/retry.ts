@@ -24,9 +24,14 @@ export class IngestionRetry {
                 const result = await fn();
                 CircuitBreaker.recordSuccess(label);
                 return result;
-            } catch (error) {
+            } catch (error: any) {
+                if (error.isFatal) {
+                    console.error(`[${label}] Fatal error encountered: ${error.message}. Aborting retries.`);
+                    CircuitBreaker.recordFailure(label);
+                    break;
+                }
                 const waitTime = this.backoffWithJitter(backoffs[i]);
-                console.warn(`[${label}] Attempt ${i + 1} failed. Retrying in ${Math.round(waitTime)}ms (includes jitter)...`);
+                console.warn(`[${label}] Attempt ${i + 1} failed: ${error.message}. Retrying in ${Math.round(waitTime)}ms (includes jitter)...`);
                 if (i < backoffs.length - 1) {
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                 } else {

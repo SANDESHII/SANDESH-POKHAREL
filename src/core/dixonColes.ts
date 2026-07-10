@@ -32,11 +32,13 @@ export class DixonColes {
      * τ(1,1) = 1 - (-0.11) = 1.1100
      */
     static tau(x: number, y: number, lambda: number, mu: number, rho: number): number {
-        if (x === 0 && y === 0) return 1 - (lambda * mu * rho);
-        if (x === 0 && y === 1) return 1 + (lambda * rho);
-        if (x === 1 && y === 0) return 1 + (mu * rho);
-        if (x === 1 && y === 1) return 1 - rho;
-        return 1;
+        let val = 1;
+        if (x === 0 && y === 0) val = 1 - (lambda * mu * rho);
+        else if (x === 0 && y === 1) val = 1 + (lambda * rho);
+        else if (x === 1 && y === 0) val = 1 + (mu * rho);
+        else if (x === 1 && y === 1) val = 1 - rho;
+        
+        return Math.max(0.0001, val);
     }
 
     /**
@@ -49,13 +51,25 @@ export class DixonColes {
         maxGoals: number = 8
     ): number[][] {
         const matrix: number[][] = Array(maxGoals + 1).fill(0).map(() => Array(maxGoals + 1).fill(0));
+        let sum = 0;
         
         for (let h = 0; h <= maxGoals; h++) {
             for (let a = 0; a <= maxGoals; a++) {
                 const probH = this.poisson(h, homeLambda);
                 const probA = this.poisson(a, awayMu);
                 const adjustment = this.tau(h, a, homeLambda, awayMu, rho);
-                matrix[h][a] = probH * probA * adjustment;
+                const prob = probH * probA * adjustment;
+                matrix[h][a] = prob;
+                sum += prob;
+            }
+        }
+        
+        // NORMALIZATION: Ensure probabilities sum to 1.0 (Risk 2 Fix)
+        if (sum > 0) {
+            for (let h = 0; h <= maxGoals; h++) {
+                for (let a = 0; a <= maxGoals; a++) {
+                    matrix[h][a] /= sum;
+                }
             }
         }
         
