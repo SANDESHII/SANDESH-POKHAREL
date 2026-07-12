@@ -6,9 +6,10 @@ import { TacticalPhase } from '../../types';
 interface MatchVisualizerProps {
     path: TacticalPhase[];
     isOver?: boolean;
+    provenance?: 'AI_GROUNDED' | 'HEURISTIC_FALLBACK';
 }
 
-export const MatchVisualizer: React.FC<MatchVisualizerProps> = ({ path, isOver = true }) => {
+export const MatchVisualizer: React.FC<MatchVisualizerProps> = ({ path, isOver = true, provenance }) => {
     const containerClasses = isOver 
         ? "space-y-6 bg-blue-950/20 p-6 rounded-2xl border border-blue-900/30"
         : "space-y-6 bg-emerald-950/20 p-6 rounded-2xl border border-emerald-900/30";
@@ -28,6 +29,12 @@ export const MatchVisualizer: React.FC<MatchVisualizerProps> = ({ path, isOver =
 
     return (
         <div className={containerClasses}>
+            <div className="absolute top-4 right-6 flex items-center gap-2">
+                <div className={`w-1.5 h-1.5 rounded-full ${provenance === 'AI_GROUNDED' ? 'bg-cyan-500 animate-pulse' : 'bg-amber-500'}`} />
+                <span className={`text-[8px] font-black uppercase tracking-widest ${provenance === 'AI_GROUNDED' ? 'text-cyan-500' : 'text-amber-500'}`}>
+                    Signal Source: {provenance === 'AI_GROUNDED' ? 'Live AI Grounding' : 'Static Baseline'}
+                </span>
+            </div>
             <div className={labelClasses}>
                 <span>Start</span>
                 <span>End</span>

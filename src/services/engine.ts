@@ -24,7 +24,7 @@ export class MatchEngine {
         context: MatchContext,
         marketOdds?: { over15: number; under15: number; over35: number; under35: number },
         rhoData: { rho: number, sigmaRho: number } = { rho: -0.11, sigmaRho: 0.05 }
-    ): AnalysisResult {
+    ): Omit<AnalysisResult, 'dataSource'> {
         // 1. Initial Goal Expectancy (Lambda/Mu)
         const hScoring = StatsCleaner.clamp(home.npxG * (1 / away.defensiveStability), 0.2, 6.0);
         const aScoring = StatsCleaner.clamp(away.npxG * (1 / home.defensiveStability), 0.2, 6.0);
@@ -97,7 +97,7 @@ export class MatchEngine {
             }
         }
 
-        const surety = this.calculateConfidenceAudit(prob, optimalPath.likelihood, Math.round(avgPurity * 100));
+        const surety = this.calculateConfidenceAudit(prob, Math.round(avgPurity * 100));
 
         const predictionLabel = isInsufficient 
             ? 'INSUFFICIENT DATA' 
@@ -145,7 +145,7 @@ export class MatchEngine {
         };
     }
 
-    static calculateConfidenceAudit(prob: number, _likelihood: number, purity: number): AnalysisConfidence {
+    static calculateConfidenceAudit(prob: number, purity: number): AnalysisConfidence {
         // Disconnected likelihood (Viterbi) from the score calculation
         const score = (prob * 0.7) + (purity / 100 * 0.3);
         

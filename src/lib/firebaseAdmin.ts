@@ -1,75 +1,139 @@
-import { initializeApp, cert, getApps, App } from 'firebase-admin/app';
-import { getFirestore, Firestore } from 'firebase-admin/firestore';
-import fs from 'fs';
-import path from 'path';
+import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  getDocs, 
+  writeBatch, 
+  deleteDoc,
+  Firestore,
+  DocumentReference,
+  CollectionReference,
+  WriteBatch,
+  query,
+  where,
+  Query
+} from 'firebase/firestore';
+import config from '../../firebase-applet-config.json';
 
-let app: App;
+let app: FirebaseApp;
 let db: Firestore;
 
-export function getFirebaseDb(): Firestore {
-  if (db) return db;
+/**
+ * COMPATIBILITY WRAPPER
+ * Mimics the firebase-admin (Firestore) interface using the Client SDK functional API.
+ * This is necessary because the environment's service account lacks permissions,
+ * but the Client SDK (using API Key) works.
+ */
+class FirestoreWrapper {
+  constructor(private firestore: Firestore) {}
 
-  // Load project config if available
-  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-  let config: any = {};
-  try {
-    if (fs.existsSync(configPath)) {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    }
-  } catch (e) {
-    console.warn('[FIREBASE] Could not read firebase-applet-config.json', e);
+  collection(path: string) {
+    return new CollectionWrapper(this.firestore, path);
   }
+
+  batch() {
+    return new BatchWrapper(writeBatch(this.firestore));
+  }
+}
+
+class CollectionWrapper {
+  private ref: CollectionReference;
+  constructor(private firestore: Firestore, private path: string) {
+    this.ref = collection(this.firestore, path);
+  }
+
+  doc(id: string) {
+    return new DocumentWrapper(this.firestore, this.path, id);
+  }
+
+  async get() {
+    const snap = await getDocs(this.ref);
+    return {
+      forEach: (cb: (doc: any) => void) => {
+        snap.forEach(s => {
+          cb({
+            id: s.id,
+            data: () => s.data(),
+            ref: s.ref
+          });
+        });
+      },
+      size: snap.size,
+      empty: snap.empty,
+      docs: snap.docs.map(s => ({
+        id: s.id,
+        data: () => s.data(),
+        ref: s.ref
+      }))
+    };
+  }
+}
+
+class DocumentWrapper {
+  public ref: DocumentReference;
+  constructor(private firestore: Firestore, collectionPath: string, id: string) {
+    this.ref = doc(this.firestore, collectionPath, id);
+  }
+
+  async get() {
+    const snap = await getDoc(this.ref);
+    return {
+      exists: snap.exists(),
+      data: () => snap.data(),
+      id: snap.id,
+      ref: this.ref
+    };
+  }
+
+  async set(data: any) {
+    return await setDoc(this.ref, data);
+  }
+
+  async delete() {
+    return await deleteDoc(this.ref);
+  }
+}
+
+class BatchWrapper {
+  constructor(private _batch: WriteBatch) {}
+
+  set(docRef: any, data: any) {
+    this._batch.set(docRef.ref || docRef, data);
+    return this;
+  }
+
+  delete(docRef: any) {
+    this._batch.delete(docRef.ref || docRef);
+    return this;
+  }
+
+  async commit() {
+    return await this._batch.commit();
+  }
+}
+
+export function getFirebaseDb(): any {
+  if (db) return new FirestoreWrapper(db);
 
   if (!getApps().length) {
-    const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-    let serviceAccount: any = null;
-
-    if (serviceAccountKey) {
-      try {
-        // If it starts with '{', it's likely JSON. Otherwise it might be a literal name or path.
-        if (serviceAccountKey.trim().startsWith('{')) {
-          serviceAccount = JSON.parse(serviceAccountKey);
-        } else {
-          console.warn(`[FIREBASE] FIREBASE_SERVICE_ACCOUNT_KEY does not appear to be JSON: "${serviceAccountKey.substring(0, 20)}..."`);
-        }
-      } catch (e) {
-        console.error('[FIREBASE] Error parsing FIREBASE_SERVICE_ACCOUNT_KEY:', e);
-      }
-    }
-
-    const options: any = {
-      projectId: config.projectId || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT
-    };
-
-    if (serviceAccount && Object.keys(serviceAccount).length > 0) {
-      try {
-        options.credential = cert(serviceAccount);
-      } catch (e) {
-        console.error('[FIREBASE] Error creating credential from service account:', e);
-      }
-    }
-
-    try {
-      app = initializeApp(options);
-    } catch (e) {
-      console.error('[FIREBASE] Error initializing Firebase Admin App with options:', options, e);
-      // Fallback to minimal initialization if possible
-      if (getApps().length > 0) {
-        app = getApps()[0];
-      } else {
-        app = initializeApp({ projectId: options.projectId || 'fallback-project-id' });
-      }
-    }
+    app = initializeApp({
+      apiKey: config.apiKey,
+      authDomain: config.authDomain,
+      projectId: config.projectId,
+      storageBucket: config.storageBucket,
+      messagingSenderId: config.messagingSenderId,
+      appId: config.appId
+    });
   } else {
-    app = getApps()[0];
+    app = getApp();
   }
 
-  // Use the specific database ID if provided in config
-  if (config.firestoreDatabaseId) {
-    db = getFirestore(app, config.firestoreDatabaseId);
-  } else {
-    db = getFirestore(app);
-  }
+  const dbId = config.firestoreDatabaseId || '(default)';
+  console.log(`[FIREBASE] Using Client SDK Wrapper for database: ${dbId}`);
+  db = getFirestore(app, dbId);
   
-  return db;
+  return new FirestoreWrapper(db);
 }

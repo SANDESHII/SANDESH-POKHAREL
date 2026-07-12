@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { motion } from 'motion/react';
-import { Shield, Zap, Crown, Info, Activity } from 'lucide-react';
+import { Shield, Zap, Crown, Info, Activity, AlertTriangle } from 'lucide-react';
 import { AnalysisResult } from '../../types';
 
 interface ProtocolStatusBoxProps {
@@ -31,14 +31,23 @@ export const ProtocolStatusBox: React.FC<ProtocolStatusBoxProps> = ({ analysis }
                             {isQuadLock ? <Crown className="w-6 h-6 text-cyan-400" /> : <Shield className="w-6 h-6 text-zinc-500" />}
                         </div>
                         <div>
-                            <h2 className={`text-[10px] font-black uppercase tracking-[0.3em] ${isQuadLock ? 'text-cyan-500' : 'text-zinc-500'}`}>
-                                {isQuadLock ? 'Nuclear Fortress Protocol' : 'Standard Verification'}
+                            <h2 className={`text-[10px] font-black uppercase tracking-[0.3em] ${analysis.provenance === 'HEURISTIC_FALLBACK' ? 'text-amber-500' : (isQuadLock ? 'text-cyan-500' : 'text-zinc-500')}`}>
+                                {analysis.provenance === 'HEURISTIC_FALLBACK' ? 'Historical Baseline Protocol' : (isQuadLock ? 'Nuclear Fortress Protocol' : 'Standard Verification')}
                             </h2>
                             <p className="text-xl font-black text-white uppercase tracking-tight">
-                                {isQuadLock ? 'Quad-Lock Active' : 'Pre-Signal Status'}
+                                {analysis.provenance === 'HEURISTIC_FALLBACK' ? 'Heuristic Analysis' : (isQuadLock ? 'Quad-Lock Active' : 'Pre-Signal Status')}
                             </p>
                         </div>
                     </div>
+
+                    {analysis.marketData?.isSimulated && (
+                        <div className="mt-4 px-3 py-2 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center gap-2 w-fit">
+                            <AlertTriangle className="w-4 h-4 text-amber-500" />
+                            <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">
+                                Simulated Market Data
+                            </span>
+                        </div>
+                    )}
 
                     <div className="space-y-4">
                         <div className="space-y-1">
@@ -69,10 +78,17 @@ export const ProtocolStatusBox: React.FC<ProtocolStatusBoxProps> = ({ analysis }
                                     className={`h-full ${isQuadLock ? 'bg-cyan-500 shadow-[0_0_10px_rgba(34,211,238,0.5)]' : 'bg-zinc-700'}`}
                                 />
                             </div>
-                            {analysis.modelAudit.signalPurity < 0.4 && (
-                                <div className="mt-3 flex items-center gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-lg">
-                                    <Shield className="w-3 h-3 text-red-500" />
-                                    <span className="text-[8px] font-black text-red-500 uppercase tracking-widest">Warning: Heuristic Data Fallback Active</span>
+                            {analysis.provenance === 'HEURISTIC_FALLBACK' || analysis.modelAudit.signalPurity < 0.4 ? (
+                                <div className="mt-3 flex items-center gap-2 px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                                    <Shield className="w-3 h-3 text-amber-500" />
+                                    <span className="text-[8px] font-black text-amber-500 uppercase tracking-widest">
+                                        {analysis.provenance === 'HEURISTIC_FALLBACK' ? 'Heuristic Analysis Active' : 'Low Purity Signal Detected'}
+                                    </span>
+                                </div>
+                            ) : (
+                                <div className="mt-3 flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+                                    <Zap className="w-3 h-3 text-emerald-500" />
+                                    <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">AI Grounding Confirmed</span>
                                 </div>
                             )}
                         </div>

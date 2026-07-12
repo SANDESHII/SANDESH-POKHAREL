@@ -8,9 +8,12 @@ interface StatCardProps {
     subValue?: string;
     icon: LucideIcon;
     isOver?: boolean;
+    purity?: number;
 }
 
-export const StatCard: React.FC<StatCardProps> = ({ label, value, subValue, icon: Icon, isOver = true }) => {
+export const StatCard: React.FC<StatCardProps> = ({ label, value, subValue, icon: Icon, isOver = true, purity }) => {
+    const isBaseline = purity !== undefined && purity < 90;
+    
     return (
         <div className="bg-zinc-950 p-6 rounded-2xl border border-zinc-900 flex flex-col justify-between space-y-4 group transition-colors hover:border-zinc-800">
             <div className="flex items-center justify-between">
@@ -19,7 +22,12 @@ export const StatCard: React.FC<StatCardProps> = ({ label, value, subValue, icon
             </div>
             <div className="space-y-1">
                 <h4 className="text-3xl font-black text-white">{value}</h4>
-                <p className="text-[10px] font-black text-zinc-800 uppercase tracking-widest">{subValue}</p>
+                <div className="flex items-center gap-2">
+                    <p className="text-[10px] font-black text-zinc-800 uppercase tracking-widest">{subValue}</p>
+                    {isBaseline && (
+                        <span className="text-[8px] font-black text-amber-500/50 bg-amber-500/5 px-1.5 py-0.5 rounded border border-amber-500/10 uppercase tracking-widest">Baseline</span>
+                    )}
+                </div>
             </div>
         </div>
     );

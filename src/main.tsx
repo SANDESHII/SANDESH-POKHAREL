@@ -120,6 +120,8 @@ const App: React.FC = () => {
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
     const [loadingStage, setLoadingStage] = useState(0);
     const [error, setError] = useState<string | null>(null);
+    const [lastRequestTime, setLastRequestTime] = useState<number>(0);
+    const RATE_LIMIT_MS = 15000; // 15 seconds client-side throttle
 
     const loadingMessages = [
         "Initializing engine...",
@@ -145,10 +147,18 @@ const App: React.FC = () => {
     const handleAnalyze = async () => {
         if (loadingAnalysis || !homeInput || !awayInput) return;
         
+        const now = Date.now();
+        if (now - lastRequestTime < RATE_LIMIT_MS) {
+            const waitSec = Math.ceil((RATE_LIMIT_MS - (now - lastRequestTime)) / 1000);
+            setError(`RATE LIMIT: Please wait ${waitSec}s before re-analysis.`);
+            return;
+        }
+
         setError(null);
         setLoadingAnalysis(true);
         setLoadingStage(0);
         setAnalysis(null);
+        setLastRequestTime(now);
 
         try {
             // Use a longer timeout for the complex analysis endpoint

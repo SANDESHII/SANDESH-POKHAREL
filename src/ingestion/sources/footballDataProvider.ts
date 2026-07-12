@@ -22,7 +22,11 @@ export class FootballDataProvider {
         'BUNDESLIGA': 'D1',
         'LA_LIGA': 'SP1',
         'SERIE_A': 'I1',
-        'LIGUE_1': 'F1'
+        'LIGUE_1': 'F1',
+        'EREDIVISIE': 'N1',
+        'PRIMEIRA_LIGA': 'P1',
+        'PRO_LEAGUE': 'B1',
+        'SUPER_LIG': 'T1'
     };
 
     static async fetchSeasonData(league: string, season: string): Promise<RawMatchData[]> {
@@ -30,7 +34,12 @@ export class FootballDataProvider {
         const cached = IngestionCache.get<RawMatchData[]>(cacheKey);
         if (cached) return cached;
 
-        const leagueCode = this.LEAGUE_MAP[league] || 'E0';
+        const leagueCode = this.LEAGUE_MAP[league];
+        if (!leagueCode) {
+            console.warn(`[INGEST] League ${league} is not supported by FootballDataProvider CSV source. Returning empty.`);
+            return [];
+        }
+        
         const seasonCode = season.replace('/', ''); // e.g., 2324
         const url = `${this.BASE_URL}/${seasonCode}/${leagueCode}.csv`;
 

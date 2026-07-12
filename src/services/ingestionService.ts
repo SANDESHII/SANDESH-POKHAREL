@@ -25,8 +25,14 @@ export class IngestionService {
     /**
      * Provides league-wide metrics like rhoData from historical matches.
      */
-    static async getLeagueContext(league: string): Promise<{ rhoData: { rho: number, sigmaRho: number }, matches: RawMatchData[] }> {
-        const historicalData = await FootballDataProvider.fetchSeasonData(league, '23/24');
+    static async getLeagueContext(league: string, season?: string): Promise<{ rhoData: { rho: number, sigmaRho: number }, matches: RawMatchData[] }> {
+        const currentYear = new Date().getFullYear();
+        const currentMonth = new Date().getMonth();
+        const startYear = currentMonth >= 6 ? currentYear : currentYear - 1;
+        const defaultSeason = `${startYear.toString().slice(-2)}/${(startYear + 1).toString().slice(-2)}`;
+        
+        const activeSeason = season || defaultSeason;
+        const historicalData = await FootballDataProvider.fetchSeasonData(league, activeSeason);
         let rhoData = { rho: -0.11, sigmaRho: 0.05 };
 
         if (historicalData.length > 50) {
@@ -90,7 +96,7 @@ export class IngestionService {
             ...team,
             npxG: finalizedExpectancy,
             avgXG: effectiveBaselineXG,
-            dataPurity: team.purity || 0.85
+            dataPurity: team.dataPurity || team.purity || 0.85
         });
     }
 }

@@ -25,9 +25,10 @@ export class LiveOddsProvider {
     };
 
     static async getOdds(league: string, matchId: string): Promise<any> {
-        if (!this.API_KEY) {
-            console.warn('ODDS_API_KEY missing - using simulated market data');
-            return this.getSimulatedOdds();
+        const isPlaceholder = !this.API_KEY || this.API_KEY === 'undefined' || this.API_KEY.length < 5;
+        if (isPlaceholder) {
+            console.warn('ODDS_API_KEY missing or invalid - using simulated market data');
+            return this.getSimulatedOdds(matchId);
         }
 
         const cacheKey = `odds_${matchId}`;
@@ -44,52 +45,78 @@ export class LiveOddsProvider {
             }
         }
 
-        const result = await IngestionRetry.execute(async () => {
-            const url = `${this.BASE_URL}/${oddsLeague}/odds/?regions=uk&markets=h2h,totals&apiKey=${this.API_KEY}`;
-            const response = await fetchWithTimeout(url);
-            if (!response.ok) {
-                const errData = await response.json().catch(() => ({}));
-                const error: any = new Error(`Odds API Error: ${response.status} - ${errData.message || response.statusText}`);
-                if (response.status === 401 || response.status === 403) {
-                    error.isFatal = true;
+        // If normalizedLeague is World Cup or similar, it might not be in LEAGUE_MAP
+        // but we can try to use soccer_epl as a base or just fallback if it fails 404
+        
+        try {
+            const result = await IngestionRetry.execute(async () => {
+                const url = `${this.BASE_URL}/${oddsLeague}/odds/?regions=uk&markets=h2h,totals&apiKey=${this.API_KEY}`;
+                const response = await fetchWithTimeout(url);
+                if (!response.ok) {
+                    if (response.status === 401 || response.status === 403) {
+                        const errData = await response.json().catch(() => ({}));
+                        const msg = errData.message || response.statusText;
+                        console.warn(`[OddsAPI] Authentication Failed: ${msg}. Falling back to simulated data.`);
+                        const error = new Error(`Auth Error: ${msg}`) as any;
+                        error.isAuthError = true;
+                        throw error;
+                    }
+                    
+                    if (response.status === 404) {
+                        console.warn(`[OddsAPI] League ${oddsLeague} not found. Falling back to simulated data.`);
+                        return null;
+                    }
+
+                    const errData = await response.json().catch(() => ({}));
+                    const msg = errData.message || response.statusText;
+                    throw new Error(`Odds API Error: ${response.status} - ${msg}`);
                 }
-                throw error;
+                const raw = await response.json();
+                
+                // raw is an array of matches. Find the one matching matchId (which is "Home-Away")
+                const [homeTarget, awayTarget] = matchId.split('-').map(s => s.trim().toUpperCase());
+                const matchData = Array.isArray(raw) ? raw.find((m: any) => {
+                    const h = String(m.home_team || '').toUpperCase();
+                    const a = String(m.away_team || '').toUpperCase();
+                    return (h.includes(homeTarget) || homeTarget.includes(h)) && 
+                           (a.includes(awayTarget) || awayTarget.includes(a));
+                }) : raw;
+
+                if (!matchData) throw new Error(`No odds found for match: ${matchId}`);
+                
+                const validated = IngestionValidator.validateOdds(matchData);
+                if (!validated) throw new Error('Invalid odds data format from API');
+                
+                return validated;
+            }, `OddsAPI_${matchId}`);
+
+            if (result) {
+                IngestionCache.set(cacheKey, result, IngestionCache.ODDS_DATA_TTL);
+                return result;
             }
-            const raw = await response.json();
-            
-            // raw is an array of matches. Find the one matching matchId (which is "Home-Away")
-            const [homeTarget, awayTarget] = matchId.split('-').map(s => s.trim().toUpperCase());
-            const matchData = Array.isArray(raw) ? raw.find((m: any) => {
-                const h = String(m.home_team || '').toUpperCase();
-                const a = String(m.away_team || '').toUpperCase();
-                return (h.includes(homeTarget) || homeTarget.includes(h)) && 
-                       (a.includes(awayTarget) || awayTarget.includes(a));
-            }) : raw;
-
-            if (!matchData) throw new Error(`No odds found for match: ${matchId}`);
-            
-            const validated = IngestionValidator.validateOdds(matchData);
-            if (!validated) throw new Error('Invalid odds data format from API');
-            
-            return validated;
-        }, `OddsAPI_${matchId}`);
-
-        if (result) {
-            IngestionCache.set(cacheKey, result, IngestionCache.ODDS_DATA_TTL);
-            return result;
+        } catch (e: any) {
+            if (e.isAuthError) {
+                console.warn(`[OddsAPI] Authentication failed. Using simulated data. (Check your ODDS_API_KEY)`);
+                return this.getSimulatedOdds(matchId);
+            }
+            throw e;
         }
 
         console.warn(`[OddsAPI] Falling back to simulated data for ${matchId} due to API failure.`);
-        return this.getSimulatedOdds();
+        return this.getSimulatedOdds(matchId);
     }
 
-    private static getSimulatedOdds() {
+    private static getSimulatedOdds(matchId: string = "UNKNOWN") {
+        const hash = matchId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+        const shift = (hash % 20) / 100; // +/- 0.10
+
         return {
-            home: 2.1,
-            draw: 3.4,
-            away: 3.2,
-            over15: 1.3,
-            under35: 1.4
+            home: 2.1 + shift,
+            draw: 3.4 - shift,
+            away: 3.2 + shift,
+            over15: 1.25 + shift,
+            under35: 1.35 + shift,
+            isSimulated: true
         };
     }
 }

@@ -11,8 +11,10 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^1.48.0",
+    "@google-cloud/firestore": "^8.6.0",
+    "@google/genai": "^2.11.0",
     "express": "^5.2.1",
+    "firebase": "^12.16.0",
     "firebase-admin": "^14.1.0",
     "lucide-react": "^0.577.0",
     "motion": "^12.38.0",

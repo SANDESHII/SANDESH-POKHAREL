@@ -1,27 +1,37 @@
 {
-  "collections": {
-    "teamStates": {
-      "documents": {
-        "teamId": {
-          "fields": {
-            "estimatedNpxG": "number",
-            "variance": "number",
-            "lastUpdate": "string",
-            "volatility": "number"
-          }
-        }
-      }
+  "entities": {
+    "TeamState": {
+      "title": "Team State",
+      "description": "Tracks team latent ability over time",
+      "type": "object",
+      "properties": {
+        "estimatedNpxG": { "type": "number" },
+        "variance": { "type": "number" },
+        "lastUpdate": { "type": "string" },
+        "volatility": { "type": "number" }
+      },
+      "required": ["estimatedNpxG", "variance", "lastUpdate", "volatility"]
     },
-    "modelMetadata": {
-      "documents": {
-        "modelId": {
-          "fields": {
-            "weights": "array",
-            "lastTrained": "string",
-            "mse": "number"
-          }
-        }
-      }
+    "ModelMetadata": {
+      "title": "Model Metadata",
+      "description": "Weights and stats for ensemble models",
+      "type": "object",
+      "properties": {
+        "weights": { "type": "array" },
+        "lastTrained": { "type": "string" },
+        "logLoss": { "type": "number" }
+      },
+      "required": ["weights", "lastTrained", "logLoss"]
+    }
+  },
+  "firestore": {
+    "/teamStates/{teamId}": {
+      "schema": "TeamState",
+      "description": "Collection of team latent states"
+    },
+    "/modelMetadata/{modelId}": {
+      "schema": "ModelMetadata",
+      "description": "Collection of model weights and metadata"
     }
   }
 }

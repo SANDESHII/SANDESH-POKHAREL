@@ -85,6 +85,7 @@ export interface MarketData {
         under35: number;
     };
     source: string;
+    isSimulated?: boolean;
 }
 
 export interface StakingPlan {
@@ -131,10 +132,17 @@ export interface AnalysisResult {
     modelAudit: ModelAudit;
     surety?: AnalysisConfidence;
     sources?: string[];
+    provenance?: 'AI_GROUNDED' | 'HEURISTIC_FALLBACK';
     realTimeData?: {
         homeLineup?: string[];
         awayLineup?: string[];
         tacticalShift?: string;
         injuries?: string[];
+    };
+    dataSource: 'LIVE' | 'FALLBACK_STATIC';
+    debug?: {
+        modelUsed?: string;
+        attemptsCount: number;
+        errors: string[];
     };
 }

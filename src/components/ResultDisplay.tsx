@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { AnalysisResult, AnalysisConfidence } from '../types';
-import { Zap, Shield, Target, Activity, TrendingUp, Crown, Link, Users, BookOpen, Search } from 'lucide-react';
+import { Zap, Shield, Target, Activity, TrendingUp, Crown, Link, Users, BookOpen, Search, AlertTriangle } from 'lucide-react';
 import { StatCard } from './results/StatCard';
 import { MatchVisualizer } from './results/MatchVisualizer';
 import { VerifiedPrediction } from './results/VerifiedPrediction';
@@ -62,8 +62,44 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                     <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em]">Over 1.5 Signal Detected</span>
                 </div>
             )}
+            {analysis.dataSource === 'FALLBACK_STATIC' && (
+                <div className="flex items-center gap-3 px-4 py-2 bg-amber-600/20 border border-amber-500/30 rounded-full w-fit mb-4">
+                    <AlertTriangle className="w-4 h-4 text-amber-400" />
+                    <span className="text-[10px] font-black text-amber-400 uppercase tracking-[0.3em]">Fallback: Static Baseline Protocol Active</span>
+                </div>
+            )}
             <ProtocolStatusBox analysis={analysis} />
             
+            {analysis.debug && (
+                <div className="bg-zinc-950/50 border border-zinc-900 rounded-2xl p-6 space-y-4">
+                    <div className="flex items-center justify-between border-b border-zinc-900 pb-4">
+                        <div className="flex items-center gap-2">
+                            <Activity className="w-3 h-3 text-zinc-500" />
+                            <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">System Trace</h3>
+                        </div>
+                        <span className="text-[8px] font-mono text-zinc-600 uppercase tracking-[0.2em]">Attempts: {analysis.debug.attemptsCount}</span>
+                    </div>
+                    <div className="space-y-3">
+                        <div className="flex justify-between items-baseline">
+                            <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Active Node</span>
+                            <span className="text-[10px] font-mono text-cyan-500 font-bold">{analysis.debug.modelUsed}</span>
+                        </div>
+                        {analysis.debug.errors.length > 0 && (
+                            <div className="space-y-2 pt-2">
+                                <span className="text-[10px] font-black text-red-900/50 uppercase tracking-widest">Fault Log</span>
+                                <div className="space-y-1">
+                                    {analysis.debug.errors.map((err, idx) => (
+                                        <div key={idx} className="text-[9px] font-mono text-red-500/60 leading-relaxed break-all bg-red-500/5 p-2 rounded border border-red-500/10">
+                                            {err}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
             <VerifiedPrediction analysis={analysis} />
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
@@ -75,6 +111,7 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                             subValue="SIGNAL"
                             icon={Zap} 
                             isOver={isHighIntensity}
+                            purity={analysis.purity}
                         />
                         <StatCard 
                             label="Prediction" 
@@ -104,7 +141,11 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                             <h3 className={`text-[10px] font-black uppercase tracking-[0.3em] ${theme.title} border-b border-zinc-900 pb-6 flex items-center gap-2`}>
                                 <Activity className="w-3 h-3" /> Tactical Projection
                             </h3>
-                            <MatchVisualizer path={analysis.tacticalPath} isOver={isOverMode} />
+                            <MatchVisualizer 
+                                path={analysis.tacticalPath} 
+                                isOver={isOverMode} 
+                                provenance={analysis.provenance} 
+                            />
                         </div>
 
 
@@ -175,7 +216,7 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                                 <span className={`text-xl font-black ${theme.text}`}>{surety.confidenceScore?.toFixed(0) || '0'}%</span>
                             </div>
                             <p className={`text-[10px] ${theme.text} opacity-60 font-black uppercase leading-relaxed text-left font-mono`}>
-                                {analysis.summary.slice(0, 120)}...
+                                {analysis.summary}
                             </p>
                         </div>
                     </div>
