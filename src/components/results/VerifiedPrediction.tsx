@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { motion } from 'motion/react';
-import { Target, Activity, Crown, Zap } from 'lucide-react';
+import { Target, Crown, Zap } from 'lucide-react';
 import { AnalysisResult } from '../../types';
 
 interface VerifiedPredictionProps {
@@ -13,59 +13,73 @@ export const VerifiedPrediction: React.FC<VerifiedPredictionProps> = ({ analysis
     if (!path) return null;
 
     const isQuadLock = analysis.isSureshot || analysis.lockCount === 4;
-
-    let accentClass = 'text-zinc-500';
-    let bgClass = 'bg-zinc-500/5';
-    let borderClass = 'border-zinc-500/20';
-    let iconBgClass = 'bg-zinc-500/10';
-    let iconBorderClass = 'border-zinc-500/30';
-    let badgeClass = 'bg-zinc-500/10 border-zinc-500/20 text-zinc-500';
-
     const isOver15 = analysis.predictionType === 'OVER_15';
+    
+    // Define theme based on status
+    const getTheme = () => {
+        if (isQuadLock) return {
+            accent: 'cyan-400',
+            bg: 'bg-cyan-500/5',
+            border: 'border-cyan-500/30',
+            iconBg: 'bg-cyan-500/20',
+            iconBorder: 'border-cyan-500/40',
+            badge: 'bg-cyan-500/20 border-cyan-500/30 text-cyan-400',
+            icon: Crown,
+            label: 'CONSOLIDATED SIGNAL',
+            badgeLabel: 'HIGH SURETY'
+        };
+        if (isOver15) return {
+            accent: 'blue-400',
+            bg: 'bg-blue-500/10',
+            border: 'border-blue-500/50',
+            iconBg: 'bg-blue-500/20',
+            iconBorder: 'border-blue-500/40',
+            badge: 'bg-blue-500/20 border-blue-500/30 text-blue-400',
+            icon: Zap,
+            label: 'OVER 1.5 TARGET',
+            badgeLabel: 'HIGH CONVERGENCE'
+        };
+        return {
+            accent: 'zinc-500',
+            bg: 'bg-zinc-500/5',
+            border: 'border-zinc-500/20',
+            iconBg: 'bg-zinc-500/10',
+            iconBorder: 'border-zinc-500/30',
+            badge: 'bg-zinc-500/10 border-zinc-500/20 text-zinc-500',
+            icon: Target,
+            label: 'Logic Prediction',
+            badgeLabel: 'VERIFYING'
+        };
+    };
 
-    if (isQuadLock) {
-        accentClass = 'text-cyan-400';
-        bgClass = 'bg-cyan-500/5';
-        borderClass = 'border-cyan-500/30';
-        iconBgClass = 'bg-cyan-500/20';
-        iconBorderClass = 'border-cyan-500/40';
-        badgeClass = 'bg-cyan-500/20 border-cyan-500/30 text-cyan-400';
-    } else if (isOver15) {
-        accentClass = 'text-blue-400';
-        bgClass = 'bg-blue-500/10';
-        borderClass = 'border-blue-500/50';
-        iconBgClass = 'bg-blue-500/20';
-        iconBorderClass = 'border-blue-500/40';
-        badgeClass = 'bg-blue-500/20 border-blue-500/30 text-blue-400';
-    }
-
-    const Icon = isQuadLock ? Crown : (isOver15 ? Zap : Target);
+    const theme = getTheme();
+    const Icon = theme.icon;
 
     return (
         <motion.div 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`${bgClass} ${borderClass} border rounded-2xl p-8 space-y-6 relative overflow-hidden group mb-10 shadow-2xl ${isQuadLock || isOver15 ? `ring-1 ${isQuadLock ? 'ring-cyan-500/20' : 'ring-blue-500/20'}` : ''}`}
+            className={`${theme.bg} ${theme.border} border rounded-2xl p-8 space-y-6 relative overflow-hidden group mb-10 shadow-2xl ${(isQuadLock || isOver15) ? `ring-1 ${isQuadLock ? 'ring-cyan-500/20' : 'ring-blue-500/20'}` : ''}`}
         >
             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                {isQuadLock ? <Crown className={`w-24 h-24 ${accentClass}`} /> : (isOver15 ? <Zap className={`w-24 h-24 ${accentClass}`} /> : <Activity className={`w-24 h-24 ${accentClass}`} />)}
+                <Icon className={`w-24 h-24 text-${theme.accent}`} />
             </div>
             
             <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 rounded-full ${iconBgClass} flex items-center justify-center border ${iconBorderClass}`}>
-                    <Icon className={`w-6 h-6 ${accentClass} ${isQuadLock || isOver15 ? 'animate-pulse' : ''}`} />
+                <div className={`w-12 h-12 rounded-full ${theme.iconBg} flex items-center justify-center border ${theme.iconBorder}`}>
+                    <Icon className={`w-6 h-6 text-${theme.accent} ${(isQuadLock || isOver15) ? 'animate-pulse' : ''}`} />
                 </div>
                 <div>
                     <div className="flex items-center gap-2">
-                        <h3 className={`text-[10px] font-black ${accentClass} uppercase tracking-[0.3em]`}>
-                            {isQuadLock ? 'ABSOLUTE ZERO SIGNAL' : (isOver15 ? 'OVER 1.5 SIGNAL' : 'Quant Prediction')}
+                        <h3 className={`text-[10px] font-black text-${theme.accent} uppercase tracking-[0.3em]`}>
+                            {theme.label}
                         </h3>
-                        <span className={`px-2 py-0.5 ${badgeClass} rounded text-[8px] font-black uppercase tracking-widest`}>
-                            {isQuadLock ? 'SURESHOT' : (isOver15 ? 'HIGH CONVERGENCE' : 'PRE-VERIFICATION')}
+                        <span className={`px-2 py-0.5 ${theme.badge} rounded text-[8px] font-black uppercase tracking-widest`}>
+                            {theme.badgeLabel}
                         </span>
                     </div>
                     <p className="text-3xl font-black text-white tracking-tight uppercase">
-                        {isQuadLock ? analysis.prediction : (analysis.predictionType === 'VOID' ? "NO CLEAR SIGNAL" : analysis.prediction)}
+                        {analysis.predictionType === 'VOID' ? "NO CLEAR SIGNAL" : analysis.prediction}
                     </p>
                 </div>
             </div>

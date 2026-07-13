@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { performAnalysis } from "./geminiService";
+import { performAnalysis } from "./src/services/geminiService";
 import { BacktestService } from "./src/services/backtestService";
 import { LogisticEnsemble } from "./src/ensemble/secondModel";
 

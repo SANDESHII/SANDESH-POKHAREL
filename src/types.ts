@@ -1,11 +1,26 @@
 
+export interface Provenance {
+    source: string;
+    purity: number;
+    imputed: boolean;
+    flags: string[];
+}
+
 export interface TeamBaseline {
     npxG: number;
-    xT: number;
     avgXG: number;
     avgXGA: number;
     cleanSheets: number;
     purity: number; // 1.0 = Real Data, 0.2 = Name-Hash Fallback
+    goalsScored?: number;
+    goalsConceded?: number;
+    form?: number[];
+    matchHistory?: any[];
+    npxGSequence?: number[];
+    avgXGSequence?: number[];
+    xGASequence?: number[];
+    defensiveStabilitySequence?: number[];
+    offensiveVolatilitySequence?: number[];
 }
 
 export interface TeamStats {
@@ -15,17 +30,36 @@ export interface TeamStats {
     avgXG: number;
     avgXGA: number;
     npxG: number; 
-    xT: number;   
     defensiveStability: number;
     offensiveVolatility: number;
     form: number[];
     cleanSheets: number;
+    unresolved?: boolean;
     npxGSequence?: number[];
+    avgXGSequence?: number[];
     xGASequence?: number[];
+    defensiveStabilitySequence?: number[];
+    offensiveVolatilitySequence?: number[];
     matchHistory?: any[];
     calibrationStability?: number;
     dataPurity?: number;
     npxGVariance?: number;
+    auditLog?: DataAuditLog;
+}
+
+export interface DataAuditLog {
+    imputedFields: string[];
+    outliersCorrected: string[];
+    entityResolutionFlags: string[];
+    sampleSize: number;
+    flags: string[];
+    purityBreakdown: {
+        base: number;
+        samplePenalty: number;
+        outlierPenalty: number;
+        consistencyPenalty: number;
+        sourceMultiplier: number;
+    };
 }
 
 export interface TacticalPhase {
@@ -46,6 +80,16 @@ export interface ModelAudit {
     analysisStability: number;
     signalStrength: number;
     noiseRatio: number;
+}
+
+export interface RawMatchData {
+    homeTeam: string;
+    awayTeam: string;
+    homeGoals: number;
+    awayGoals: number;
+    date: string;
+    signature?: string;
+    unresolved?: boolean;
 }
 
 export interface AnalysisConfidence {
@@ -114,6 +158,25 @@ export interface AnalysisResult {
     verifiedOptimalPath?: TacticalSequence;
     minimumExpectancy: number;
     potentialCeiling: number;
+    verifiedFacts?: {
+        homeLineup: string[];
+        awayLineup: string[];
+        injuries: {
+            home: string[];
+            away: string[];
+        };
+        weather: string;
+        matchContext: string;
+        tacticalDrift: string;
+        verifiedNewsSummary: string;
+    };
+    reasonedAdjustments?: {
+        homeOffenseDelta: number;
+        homeDefenseDelta: number;
+        awayOffenseDelta: number;
+        awayDefenseDelta: number;
+        logic: string;
+    };
     prediction?: string;
     predictionType?: 'OVER_15' | 'UNDER_35' | 'VOID';
     predictionLabel?: string;

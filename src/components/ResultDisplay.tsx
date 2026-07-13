@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { AnalysisResult, AnalysisConfidence } from '../types';
-import { Zap, Shield, Target, Activity, TrendingUp, Crown, Link, Users, BookOpen, Search, AlertTriangle } from 'lucide-react';
+import { Zap, Shield, Target, Activity, TrendingUp, Crown, Link, Users, BookOpen, Search, AlertTriangle, Brain } from 'lucide-react';
 import { StatCard } from './results/StatCard';
 import { MatchVisualizer } from './results/MatchVisualizer';
 import { VerifiedPrediction } from './results/VerifiedPrediction';
@@ -51,89 +51,42 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
     };
 
     const theme = getThemeConfig();
-    const isHighIntensity = pType === 'OVER_15';
-    const isOverMode = pType === 'OVER_15';
+    const isOver15 = pType === 'OVER_15';
 
     return (
-        <div className={`space-y-10 focus:outline-none p-8 rounded-3xl border transition-all duration-700 ${theme.container}`}>
-            {isOverMode && (
+        <div className={`space-y-10 p-8 rounded-3xl border transition-all duration-700 ${theme.container}`}>
+            {isOver15 && (
                 <div className="flex items-center gap-3 px-4 py-2 bg-blue-600/20 border border-blue-500/30 rounded-full w-fit mb-4">
                     <Zap className="w-4 h-4 text-blue-400 animate-pulse" />
-                    <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em]">Over 1.5 Signal Detected</span>
+                    <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em]">Over 1.5 Target Detected</span>
                 </div>
             )}
+            
             {analysis.dataSource === 'FALLBACK_STATIC' && (
                 <div className="flex items-center gap-3 px-4 py-2 bg-amber-600/20 border border-amber-500/30 rounded-full w-fit mb-4">
                     <AlertTriangle className="w-4 h-4 text-amber-400" />
-                    <span className="text-[10px] font-black text-amber-400 uppercase tracking-[0.3em]">Fallback: Static Baseline Protocol Active</span>
-                </div>
-            )}
-            <ProtocolStatusBox analysis={analysis} />
-            
-            {analysis.debug && (
-                <div className="bg-zinc-950/50 border border-zinc-900 rounded-2xl p-6 space-y-4">
-                    <div className="flex items-center justify-between border-b border-zinc-900 pb-4">
-                        <div className="flex items-center gap-2">
-                            <Activity className="w-3 h-3 text-zinc-500" />
-                            <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">System Trace</h3>
-                        </div>
-                        <span className="text-[8px] font-mono text-zinc-600 uppercase tracking-[0.2em]">Attempts: {analysis.debug.attemptsCount}</span>
-                    </div>
-                    <div className="space-y-3">
-                        <div className="flex justify-between items-baseline">
-                            <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Active Node</span>
-                            <span className="text-[10px] font-mono text-cyan-500 font-bold">{analysis.debug.modelUsed}</span>
-                        </div>
-                        {analysis.debug.errors.length > 0 && (
-                            <div className="space-y-2 pt-2">
-                                <span className="text-[10px] font-black text-red-900/50 uppercase tracking-widest">Fault Log</span>
-                                <div className="space-y-1">
-                                    {analysis.debug.errors.map((err, idx) => (
-                                        <div key={idx} className="text-[9px] font-mono text-red-500/60 leading-relaxed break-all bg-red-500/5 p-2 rounded border border-red-500/10">
-                                            {err}
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                    </div>
+                    <span className="text-[10px] font-black text-amber-400 uppercase tracking-[0.3em]">Note: Using Historical Baseline Data</span>
                 </div>
             )}
 
+            <ProtocolStatusBox analysis={analysis} />
             <VerifiedPrediction analysis={analysis} />
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
                 <div className="lg:col-span-8 space-y-10">
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                        <StatCard 
-                            label="Probability" 
-                            value={`${analysis.probability}%`} 
-                            subValue="SIGNAL"
-                            icon={Zap} 
-                            isOver={isHighIntensity}
-                            purity={analysis.purity}
-                        />
-                        <StatCard 
-                            label="Prediction" 
-                            value={analysis.prediction?.replace(' GOALS', '') || "STABLE"} 
-                            subValue="ALGORITHM"
-                            icon={Target} 
-                            isOver={isHighIntensity}
-                        />
-                        <StatCard 
-                            label="Min Goals" 
-                            value={analysis.minimumExpectancy?.toFixed(2) || '0.00'} 
-                            subValue="EXPECTANCY"
-                            icon={Shield} 
-                            isOver={isHighIntensity}
-                        />
-                        <StatCard 
-                            label="Max Goals" 
-                            value={analysis.potentialCeiling?.toFixed(2) || '0.00'} 
-                            subValue="UPPER LIMIT"
-                            icon={TrendingUp} 
-                            isOver={isHighIntensity}
-                        />
+                        {[
+                            { label: "Probability", value: `${analysis.probability}%`, subValue: "CONFIDENCE", icon: Zap, purity: analysis.purity },
+                            { label: "Prediction", value: analysis.prediction?.replace(' GOALS', '') || "STABLE", subValue: "MARKET TYPE", icon: Target },
+                            { label: "Min Goals", value: analysis.minimumExpectancy?.toFixed(2) || '0.00', subValue: "LOWER BOUND", icon: Shield },
+                            { label: "Max Goals", value: analysis.potentialCeiling?.toFixed(2) || '0.00', subValue: "UPPER BOUND", icon: TrendingUp }
+                        ].map((stat, i) => (
+                            <StatCard 
+                                key={i}
+                                {...stat}
+                                isOver={isOver15}
+                            />
+                        ))}
                     </div>
  
                     <div className={`bg-zinc-950 border ${theme.border} rounded-2xl p-10 space-y-12 shadow-2xl`}>
@@ -143,43 +96,29 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                             </h3>
                             <MatchVisualizer 
                                 path={analysis.tacticalPath} 
-                                isOver={isOverMode} 
+                                isOver={isOver15} 
                                 provenance={analysis.provenance} 
                             />
                         </div>
 
-
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-10 pt-6 border-t border-zinc-900">
-                            <div className="space-y-6">
-                                <h4 className={`text-[10px] font-black uppercase tracking-widest ${theme.title}`}>
-                                    {analysis.homeStats.name}
-                                </h4>
-                                <div className="grid grid-cols-2 gap-8">
-                                    <div className="space-y-2">
-                                        <span className="text-[10px] text-zinc-600 uppercase font-black">xG</span>
-                                        <p className="text-3xl font-black text-white">{analysis.homeXG?.toFixed(2) || '0.00'}</p>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <span className="text-[10px] text-zinc-600 uppercase font-black">Power</span>
-                                        <p className={`text-3xl font-black ${theme.text}`}>{analysis.homeStats.xT?.toFixed(2) || '0.00'}</p>
-                                    </div>
-                                </div>
-                            </div>
-                            <div className={`space-y-6 md:border-l border-zinc-900 md:pl-10`}>
-                                <h4 className={`text-[10px] font-black uppercase tracking-widest ${theme.title}`}>
-                                    {analysis.awayStats.name}
-                                </h4>
-                                <div className="grid grid-cols-2 gap-8">
-                                    <div className="space-y-2">
-                                        <span className="text-[10px] text-zinc-600 uppercase font-black">xG</span>
-                                        <p className="text-3xl font-black text-white">{analysis.awayXG?.toFixed(2) || '0.00'}</p>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <span className="text-[10px] text-zinc-600 uppercase font-black">Power</span>
-                                        <p className={`text-3xl font-black ${theme.text}`}>{analysis.awayStats.xT?.toFixed(2) || '0.00'}</p>
+                            {[analysis.homeStats, analysis.awayStats].map((team, idx) => (
+                                <div key={idx} className={`space-y-6 ${idx === 1 ? 'md:border-l border-zinc-900 md:pl-10' : ''}`}>
+                                    <h4 className={`text-[10px] font-black uppercase tracking-widest ${theme.title}`}>
+                                        {team.name}
+                                    </h4>
+                                    <div className="grid grid-cols-2 gap-8">
+                                        <div className="space-y-2">
+                                            <span className="text-[10px] text-zinc-600 uppercase font-black">xG</span>
+                                            <p className="text-3xl font-black text-white">{(idx === 0 ? analysis.homeXG : analysis.awayXG)?.toFixed(2) || '0.00'}</p>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <span className="text-[10px] text-zinc-600 uppercase font-black">Goals</span>
+                                            <p className={`text-3xl font-black ${theme.text}`}>{team.goalsScored || '0'}</p>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
+                            ))}
                         </div>
                     </div>
                 </div>
@@ -204,7 +143,7 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                                         <Shield className={`w-3 h-3 ${analysis.lockCount >= 3 ? theme.text : 'text-zinc-800'}`} />
                                     )}
                                     <span className={`text-[8px] font-black uppercase tracking-widest ${analysis.lockCount >= 3 || analysis.isSureshot ? 'text-zinc-300' : 'text-zinc-800'}`}>
-                                        {analysis.isSureshot ? 'ABSOLUTE ZERO PROTOCOL' : 'Nuclear Fortress'}
+                                        {analysis.isSureshot ? 'HIGH CONVERGENCE SIGNAL' : 'Verified Logic'}
                                     </span>
                                 </div>
                             </div>
@@ -226,14 +165,15 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                             <TrendingUp className="w-3 h-3" /> Indicators
                         </h4>
                         <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-1">
-                                <span className="text-[8px] uppercase font-black opacity-30 block">Entropy</span>
-                                <div className="text-[10px] font-mono text-zinc-300 uppercase">{analysis.marketIndicators.volume}</div>
-                            </div>
-                            <div className="space-y-1">
-                                <span className="text-[8px] uppercase font-black opacity-30 block">Sentiment</span>
-                                <div className="text-[10px] font-mono text-zinc-300 uppercase">{(analysis.marketIndicators.sentimentScore * 100).toFixed(0)}%</div>
-                            </div>
+                            {[
+                                { label: 'Entropy', value: analysis.marketIndicators.volume },
+                                { label: 'Sentiment', value: `${(analysis.marketIndicators.sentimentScore * 100).toFixed(0)}%` }
+                            ].map((ind, i) => (
+                                <div key={i} className="space-y-1">
+                                    <span className="text-[8px] uppercase font-black opacity-30 block">{ind.label}</span>
+                                    <div className="text-[10px] font-mono text-zinc-300 uppercase">{ind.value}</div>
+                                </div>
+                            ))}
                         </div>
                     </div>
 
@@ -242,14 +182,15 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                             <Zap className="w-3 h-3 text-amber-500" /> Signal Audit
                         </h4>
                         <div className="space-y-4">
-                            <div className="space-y-2 p-3 bg-black/40 border border-zinc-900 rounded-lg">
-                                <span className="text-[8px] uppercase font-black opacity-30 block">Market</span>
-                                <p className="text-[10px] font-bold text-zinc-100 uppercase leading-relaxed">{analysis.context.marketSentiment || "STEADY"}</p>
-                            </div>
-                            <div className="space-y-2 p-3 bg-black/40 border border-zinc-900 rounded-lg">
-                                <span className="text-[8px] uppercase font-black opacity-30 block">Drift</span>
-                                <p className="text-[10px] font-bold text-zinc-100 uppercase leading-relaxed">{analysis.context.tacticalDrift || "STABLE"}</p>
-                            </div>
+                            {[
+                                { label: 'Market', value: analysis.context.marketSentiment || "STEADY" },
+                                { label: 'Drift', value: analysis.context.tacticalDrift || "STABLE" }
+                            ].map((audit, i) => (
+                                <div key={i} className="space-y-2 p-3 bg-black/40 border border-zinc-900 rounded-lg">
+                                    <span className="text-[8px] uppercase font-black opacity-30 block">{audit.label}</span>
+                                    <p className="text-[10px] font-bold text-zinc-100 uppercase leading-relaxed">{audit.value}</p>
+                                </div>
+                            ))}
                             <div className="space-y-2 p-3 bg-black/40 border border-zinc-900 rounded-lg">
                                 <span className="text-[8px] uppercase font-black opacity-30 block">Data Purity</span>
                                 <div className="flex items-center gap-2">
@@ -264,6 +205,7 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                                     </span>
                                 </div>
                             </div>
+
                             <div className="space-y-2 p-3 bg-black/40 border border-zinc-900 rounded-lg">
                                 <span className="text-[8px] uppercase font-black opacity-30 block">Signal Strength</span>
                                 <div className="flex items-center gap-2">
@@ -291,22 +233,19 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                                 <Users className="w-3 h-3" /> Real-Time Intelligence
                             </h3>
                             <div className="grid grid-cols-2 gap-6">
-                                <div className="space-y-3">
-                                    <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block">Home Rotation</span>
-                                    <div className="flex flex-wrap gap-1.5">
-                                        {analysis.realTimeData.homeLineup?.map((p, i) => (
-                                            <span key={i} className="px-2 py-1 bg-zinc-900 border border-zinc-800 text-[9px] text-zinc-300 font-bold uppercase rounded">{p}</span>
-                                        )) || <span className="text-zinc-600 text-[10px] italic">No data found</span>}
+                                {[
+                                    { label: 'Home Rotation', data: analysis.realTimeData.homeLineup },
+                                    { label: 'Away Rotation', data: analysis.realTimeData.awayLineup }
+                                ].map((rot, i) => (
+                                    <div key={i} className="space-y-3">
+                                        <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block">{rot.label}</span>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {rot.data?.map((p, j) => (
+                                                <span key={j} className="px-2 py-1 bg-zinc-900 border border-zinc-800 text-[9px] text-zinc-300 font-bold uppercase rounded">{p}</span>
+                                            )) || <span className="text-zinc-600 text-[10px] italic">No data found</span>}
+                                        </div>
                                     </div>
-                                </div>
-                                <div className="space-y-3">
-                                    <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block">Away Rotation</span>
-                                    <div className="flex flex-wrap gap-1.5">
-                                        {analysis.realTimeData.awayLineup?.map((p, i) => (
-                                            <span key={i} className="px-2 py-1 bg-zinc-900 border border-zinc-800 text-[9px] text-zinc-300 font-bold uppercase rounded">{p}</span>
-                                        )) || <span className="text-zinc-600 text-[10px] italic">No data found</span>}
-                                    </div>
-                                </div>
+                                ))}
                             </div>
                             {analysis.realTimeData.tacticalShift && (
                                 <div className="p-4 bg-zinc-950 border border-zinc-900 rounded-xl space-y-2">
@@ -315,6 +254,55 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                                         <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">Tactical News</span>
                                     </div>
                                     <p className="text-[11px] text-zinc-300 leading-relaxed font-medium italic">"{analysis.realTimeData.tacticalShift}"</p>
+                                </div>
+                            )}
+                            {analysis.realTimeData.injuries && analysis.realTimeData.injuries.length > 0 && (
+                                <div className="p-4 bg-rose-950/20 border border-rose-900/30 rounded-xl space-y-2">
+                                    <div className="flex items-center gap-2">
+                                        <AlertTriangle className="w-3 h-3 text-rose-500" />
+                                        <span className="text-[8px] font-black uppercase text-rose-500 tracking-widest">Missing Personnel</span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {analysis.realTimeData.injuries.map((p, i) => (
+                                            <span key={i} className="px-2 py-0.5 bg-rose-900/40 border border-rose-500/20 text-[8px] text-rose-300 font-bold uppercase rounded">{p}</span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {analysis.reasonedAdjustments && (
+                                <div className="p-4 bg-amber-950/20 border border-amber-900/30 rounded-xl space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <Brain className="w-3 h-3 text-amber-500" />
+                                            <span className="text-[8px] font-black uppercase text-amber-500 tracking-widest">Quant Reasoning Layer</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {[
+                                            { label: 'Home Delta', off: analysis.reasonedAdjustments.homeOffenseDelta, def: analysis.reasonedAdjustments.homeDefenseDelta },
+                                            { label: 'Away Delta', off: analysis.reasonedAdjustments.awayOffenseDelta, def: analysis.reasonedAdjustments.awayDefenseDelta }
+                                        ].map((delta, i) => (
+                                            <div key={i} className="p-2 bg-black/40 rounded border border-white/5">
+                                                <p className="text-[7px] text-zinc-500 uppercase font-bold mb-1">{delta.label}</p>
+                                                <div className="flex gap-2">
+                                                    <span className={`text-[10px] font-mono ${delta.off < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                                        Off: {delta.off > 0 ? '+' : ''}{delta.off.toFixed(2)}
+                                                    </span>
+                                                    <span className={`text-[10px] font-mono ${delta.def > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                                        Def: {delta.def > 0 ? '+' : ''}{delta.def.toFixed(2)}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <div className="pt-2 border-t border-amber-900/20">
+                                        <p className="text-[9px] text-amber-200/70 leading-relaxed font-medium italic">
+                                            {analysis.reasonedAdjustments.logic}
+                                        </p>
+                                    </div>
                                 </div>
                             )}
                         </div>
@@ -346,4 +334,3 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
         </div>
     );
 };
-

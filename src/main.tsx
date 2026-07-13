@@ -168,7 +168,7 @@ const App: React.FC = () => {
                 body: JSON.stringify({
                     homeTeam: homeInput.toUpperCase(),
                     awayTeam: awayInput.toUpperCase(),
-                    league: (leagueInput || 'INSTITUTIONAL_ROUTING').toUpperCase(),
+                    league: (leagueInput || 'STANDARD').toUpperCase(),
                     kickoff: (timeInput || 'UPCOMING').toUpperCase(),
                     isSearchEnabled: isSearchEnabled
                 })

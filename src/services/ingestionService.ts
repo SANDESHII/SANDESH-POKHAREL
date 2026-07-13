@@ -1,7 +1,9 @@
-import { TeamStats } from '../types';
-import { StatsCleaner, Provenance } from '../cleaning/statsCleaner';
+import { TeamStats, Provenance } from '../types';
+import { StatsCleaner } from '../cleaning/statsCleaner';
 import { FootballDataProvider } from '../ingestion/sources/footballDataProvider';
 import { RawMatchData } from '../ingestion/schema';
+import { TeamMappingService } from './teamMappingService';
+import { IngestionCache } from '../ingestion/cache';
 
 import { DixonColes } from '../core/dixonColes';
 
@@ -10,69 +12,46 @@ import { DixonColes } from '../core/dixonColes';
  * Coordinates data entry and initial standardization across multiple providers.
  */
 export class IngestionService {
-    private static clean(v: any, fallback: number = 0): number {
-        if (typeof v === 'number') return isNaN(v) ? fallback : v;
+    private static clean(v: any, f: number = 0): number {
+        if (typeof v === 'number') return isNaN(v) ? f : v;
         if (typeof v === 'string') {
-            const sanitized = v.replace(/%/g, '').replace(/[^0-9.-]/g, '');
-            const parsed = parseFloat(sanitized);
-            if (isNaN(parsed)) return fallback;
-            if (v.includes('%') && parsed > 1) return parsed / 100;
-            return parsed;
+            const p = parseFloat(v.replace(/%/g, '').replace(/[^0-9.-]/g, ''));
+            return isNaN(p) ? f : (v.includes('%') && p > 1 ? p / 100 : p);
         }
-        return fallback;
+        return f;
     }
 
-    /**
-     * Provides league-wide metrics like rhoData from historical matches.
-     */
+    static deduplicateMatches(matches: RawMatchData[]): RawMatchData[] {
+        return matches.filter(m => {
+            if (!m.signature) return true;
+            if (IngestionCache.get(`sig_${m.signature}`)) return false;
+            IngestionCache.setPermanent(`sig_${m.signature}`, true);
+            return true;
+        });
+    }
+
     static async getLeagueContext(league: string, season?: string): Promise<{ rhoData: { rho: number, sigmaRho: number }, matches: RawMatchData[] }> {
-        const currentYear = new Date().getFullYear();
-        const currentMonth = new Date().getMonth();
-        const startYear = currentMonth >= 6 ? currentYear : currentYear - 1;
-        const defaultSeason = `${startYear.toString().slice(-2)}/${(startYear + 1).toString().slice(-2)}`;
+        const y = new Date().getFullYear(), m = new Date().getMonth();
+        const sY = m >= 6 ? y : y - 1;
+        const s = season || `${sY.toString().slice(-2)}/${(sY + 1).toString().slice(-2)}`;
+        const hist = this.deduplicateMatches(await FootballDataProvider.fetchSeasonData(league, s));
         
-        const activeSeason = season || defaultSeason;
-        const historicalData = await FootballDataProvider.fetchSeasonData(league, activeSeason);
-        let rhoData = { rho: -0.11, sigmaRho: 0.05 };
-
-        if (historicalData.length > 50) {
-            const teamAvgs = new Map<string, { scored: number, conceded: number, count: number }>();
-            historicalData.forEach(m => {
-                if (m.homeGoals === undefined || m.awayGoals === undefined) return;
-                
-                const h = teamAvgs.get(m.homeTeam) || { scored: 0, conceded: 0, count: 0 };
-                h.scored += m.homeGoals;
-                h.conceded += m.awayGoals;
-                h.count++;
-                teamAvgs.set(m.homeTeam, h);
-
-                const a = teamAvgs.get(m.awayTeam) || { scored: 0, conceded: 0, count: 0 };
-                a.scored += m.awayGoals;
-                a.conceded += m.homeGoals;
-                a.count++;
-                teamAvgs.set(m.awayTeam, a);
+        let rho = { rho: -0.11, sigmaRho: 0.05 };
+        if (hist.length > 50) {
+            const avgs = new Map<string, { s: number, c: number, n: number }>();
+            hist.forEach(match => {
+                if (match.homeGoals == null) return;
+                [[TeamMappingService.canonicalize(match.homeTeam).id, match.homeGoals, match.awayGoals], [TeamMappingService.canonicalize(match.awayTeam).id, match.awayGoals, match.homeGoals]].forEach(([id, gs, gc]) => {
+                    const e = avgs.get(id as string) || { s: 0, c: 0, n: 0 };
+                    e.s += gs as number; e.c += gc as number; e.n++;
+                    avgs.set(id as string, e);
+                });
             });
 
-            const fitInputs = historicalData
-                .filter(m => m.homeGoals !== undefined && m.awayGoals !== undefined)
-                .map(m => {
-                    const hStats = teamAvgs.get(m.homeTeam)!;
-                    const aStats = teamAvgs.get(m.awayTeam)!;
-                    return {
-                        x: m.homeGoals!,
-                        y: m.awayGoals!,
-                        lambda: hStats.scored / hStats.count,
-                        mu: aStats.scored / aStats.count
-                    };
-                })
-                .slice(-200);
-
-            if (fitInputs.length > 20) {
-                rhoData = DixonColes.fitRho(fitInputs);
-            }
+            const fit = hist.filter(m => m.homeGoals != null).map(m => ({ x: m.homeGoals!, y: m.awayGoals!, lambda: avgs.get(TeamMappingService.canonicalize(m.homeTeam).id)!.s / avgs.get(TeamMappingService.canonicalize(m.homeTeam).id)!.n, mu: avgs.get(TeamMappingService.canonicalize(m.awayTeam).id)!.s / avgs.get(TeamMappingService.canonicalize(m.awayTeam).id)!.n })).slice(-200);
+            if (fit.length > 20) rho = DixonColes.fitRho(fit);
         }
-
-        return { rhoData, matches: historicalData };
+        return { rhoData: rho, matches: hist };
     }
 
     static standardize(team: Record<string, any>, matrix: Record<string, any>): TeamStats {
@@ -80,23 +59,17 @@ export class IngestionService {
     }
 
     static standardizeWithProvenance(team: Record<string, any>, matrix: Record<string, any>): { stats: TeamStats; provenance: Provenance } {
-        const reliability = StatsCleaner.clamp(this.clean(matrix?.reliabilityScore, 0.5), 0, 1.0);
-        const rawNPXG = StatsCleaner.clamp(this.clean(team.npxG), 0, 5.5);
-        const baselineXG = StatsCleaner.clamp(this.clean(team.avgXG), 0, 5.0);
-        
-        const aiWeight = StatsCleaner.clamp(reliability * 0.95, 0.45, 0.95);
-        const baselineWeight = 1 - aiWeight;
-        
-        const suggestedBaseline = StatsCleaner.clamp(this.clean(matrix?.aiScoringBaseline), 0.5, 4.5);
-        const effectiveBaselineXG = suggestedBaseline > 0.5 ? (baselineXG * 0.3 + suggestedBaseline * 0.7) : baselineXG;
-
-        const finalizedExpectancy = (rawNPXG * aiWeight) + (effectiveBaselineXG * baselineWeight);
+        const rel = StatsCleaner.clamp(this.clean(matrix?.reliabilityScore, 0.5), 0, 1.0);
+        const raw = StatsCleaner.clamp(this.clean(team.npxG), 0, 5.5);
+        const bXG = StatsCleaner.clamp(this.clean(team.avgXG), 0, 5.0);
+        const aiW = StatsCleaner.clamp(rel * 0.95, 0.45, 0.95);
+        const sug = StatsCleaner.clamp(this.clean(matrix?.aiScoringBaseline), 0.5, 4.5);
+        const eXG = sug > 0.5 ? (bXG * 0.3 + sug * 0.7) : bXG;
 
         return StatsCleaner.cleanTeamStats({
-            ...team,
-            npxG: finalizedExpectancy,
-            avgXG: effectiveBaselineXG,
-            dataPurity: team.dataPurity || team.purity || 0.85
+            ...team, npxG: (raw * aiW) + (eXG * (1 - aiW)), avgXG: eXG,
+            dataPurity: team.dataPurity ?? team.purity ?? 0.5
         });
     }
 }
+

@@ -65,8 +65,17 @@ export class FootballDataProvider {
                 .map(r => IngestionValidator.validateRawMatch(r, league, season))
                 .filter((r): r is RawMatchData => r !== null);
 
-            console.log(`[INGEST] Successfully validated ${validated.length}/${parsed.data.length} rows for ${league}`);
-            return validated;
+            // Deduplication at source
+            const deduplicated = validated.filter(m => {
+                if (!m.signature) return true;
+                const isDuplicate = IngestionCache.get(`sig_${m.signature}`) === true;
+                if (isDuplicate) return false;
+                IngestionCache.setPermanent(`sig_${m.signature}`, true);
+                return true;
+            });
+
+            console.log(`[INGEST] Successfully validated ${deduplicated.length}/${parsed.data.length} unique rows for ${league}`);
+            return deduplicated;
         }, `FootballDataCSV_${league}`);
 
         if (result && result.length > 0) {

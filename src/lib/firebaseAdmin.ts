@@ -11,10 +11,7 @@ import {
   Firestore,
   DocumentReference,
   CollectionReference,
-  WriteBatch,
-  query,
-  where,
-  Query
+  WriteBatch
 } from 'firebase/firestore';
 import config from '../../firebase-applet-config.json';
 

@@ -45,8 +45,8 @@ export class MatchEngine {
         const simulation = MonteCarloSimulator.run(
             hScoring, 
             aScoring, 
-            home.npxGVariance || 0.15, 
-            away.npxGVariance || 0.15,
+            home.npxGVariance ?? 0.15, 
+            away.npxGVariance ?? 0.15,
             rho,
             sigmaRho
         );
@@ -59,7 +59,7 @@ export class MatchEngine {
         const lock1 = pOver15 > 0.72 || pUnder35 > 0.76;
         const lock2 = agreement.divergence < 0.10; // Genuine independent confirmation (< 10 pts)
         const lock3 = (home.form.reduce((a, b) => a + b, 0) / home.form.length) > 0.45;
-        const lock4 = (home.dataPurity || 1.0) > 0.4 && (away.dataPurity || 1.0) > 0.4;
+        const lock4 = (home.dataPurity ?? 0.35) > 0.4 && (away.dataPurity ?? 0.35) > 0.4;
         const lock5 = simulation.stdDev < 1.8; 
         
         const lockCount = [lock1, lock2, lock3, lock4, lock5].filter(Boolean).length;
@@ -74,7 +74,7 @@ export class MatchEngine {
         const prob = type === 'OVER_15' ? pOver15 : pUnder35;
         
         // STRICT HONESTY: If purity is < 20%, we withhold the prediction entirely
-        const avgPurity = ((home.dataPurity || 0) + (away.dataPurity || 0)) / 2;
+        const avgPurity = ((home.dataPurity ?? 0) + (away.dataPurity ?? 0)) / 2;
         const isInsufficient = avgPurity < 0.2;
         const isVoid = isInsufficient || prob < 0.58 || lockCount < 1 || agreement.isRedFlag;
 
@@ -124,7 +124,7 @@ export class MatchEngine {
             minimumExpectancy: simulation.confidenceInterval[0],
             potentialCeiling: simulation.confidenceInterval[1],
             lockCount,
-            purity: Math.round((home.dataPurity || 1.0) * 50 + (away.dataPurity || 1.0) * 50),
+            purity: Math.round((home.dataPurity ?? 0.35) * 50 + (away.dataPurity ?? 0.35) * 50),
             signalStrength: prob, // Disconnected from Viterbi/Tactical path
             isSureshot: prob > 0.82 && lockCount >= 3 && !isVoid,
             context,
@@ -137,10 +137,10 @@ export class MatchEngine {
                 sentimentScore: 0.5
             },
             modelAudit: {
-                signalPurity: (home.dataPurity || 1.0),
+                signalPurity: (home.dataPurity ?? 0.35),
                 analysisStability: avgPurity, // Use data purity instead of Viterbi for stability
                 signalStrength: prob,
-                noiseRatio: 1 - (home.dataPurity || 1.0)
+                noiseRatio: 1 - (home.dataPurity ?? 0.35)
             }
         };
     }

@@ -1,20 +1,10 @@
-/**
- * MODEL AGREEMENT ENGINE
- * Measures consensus between Dixon-Coles and Logistic Ensemble.
- */
 export class AgreementScorer {
-    static calculate(probA: number, probB: number): { consensus: number; divergence: number; isRedFlag: boolean } {
-        const divergence = Math.abs(probA - probB);
-        // Consensus is high if divergence is low
-        const consensus = Math.max(0, 1 - (divergence * 2));
-        
-        // Large disagreement (> 20 points) is a red flag
-        const isRedFlag = divergence > 0.20;
-
+    static calculate(a: number, b: number): { consensus: number; divergence: number; isRedFlag: boolean } {
+        const d = Math.abs(a - b);
         return {
-            consensus: parseFloat(consensus.toFixed(3)),
-            divergence: parseFloat(divergence.toFixed(3)),
-            isRedFlag
+            consensus: parseFloat(Math.max(0, 1 - d * 2).toFixed(3)),
+            divergence: parseFloat(d.toFixed(3)),
+            isRedFlag: d > 0.20
         };
     }
 }

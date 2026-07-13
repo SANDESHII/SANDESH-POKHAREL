@@ -28,8 +28,8 @@ export const BacktestDisplay: React.FC = () => {
         <div className="space-y-8">
             <div className="flex items-center justify-between">
                 <div className="space-y-1">
-                    <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500">Validation Protocol</h3>
-                    <p className="text-2xl font-black text-white uppercase tracking-tighter">System Backtest</p>
+                    <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-500">System Accuracy</h3>
+                    <p className="text-2xl font-black text-white uppercase tracking-tighter">Model Backtest</p>
                 </div>
                 <button 
                     onClick={runBacktest}

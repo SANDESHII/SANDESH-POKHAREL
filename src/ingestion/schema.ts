@@ -18,6 +18,8 @@ export interface RawMatchData {
     awayGoals?: number;
     league: string;
     season: string;
+    signature?: string;
+    unresolved?: boolean;
 }
 
 export interface IngestedSignal {

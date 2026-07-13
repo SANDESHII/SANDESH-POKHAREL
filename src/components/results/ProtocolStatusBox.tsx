@@ -10,9 +10,13 @@ interface ProtocolStatusBoxProps {
 
 export const ProtocolStatusBox: React.FC<ProtocolStatusBoxProps> = ({ analysis }) => {
     const isQuadLock = analysis.lockCount === 4 || analysis.isSureshot;
+    const isFallback = analysis.provenance === 'HEURISTIC_FALLBACK';
+    
     const theme = isQuadLock 
-        ? { accent: 'cyan', text: 'text-cyan-400', border: 'border-cyan-500/30', bg: 'bg-cyan-950/20', shadow: 'shadow-cyan-500/10' }
-        : { accent: 'zinc', text: 'text-zinc-500', border: 'border-zinc-800', bg: 'bg-zinc-950/40', shadow: 'shadow-none' };
+        ? { accent: 'cyan', text: 'text-cyan-400', border: 'border-cyan-500/30', bg: 'bg-cyan-950/20', shadow: 'shadow-cyan-500/10', status: 'text-cyan-500' }
+        : isFallback
+            ? { accent: 'amber', text: 'text-amber-400', border: 'border-amber-500/30', bg: 'bg-amber-950/10', shadow: 'shadow-none', status: 'text-amber-500' }
+            : { accent: 'zinc', text: 'text-zinc-500', border: 'border-zinc-800', bg: 'bg-zinc-950/40', shadow: 'shadow-none', status: 'text-zinc-500' };
 
     return (
         <motion.div 
@@ -20,22 +24,20 @@ export const ProtocolStatusBox: React.FC<ProtocolStatusBoxProps> = ({ analysis }
             animate={{ opacity: 1, y: 0 }}
             className={`w-full ${theme.bg} border ${theme.border} ${theme.shadow} rounded-3xl p-8 md:p-10 mb-10 relative overflow-hidden`}
         >
-            {/* Background Accent */}
-            <div className={`absolute top-0 right-0 w-64 h-64 ${isQuadLock ? 'bg-cyan-500/5' : 'bg-zinc-500/5'} blur-[100px] -mr-32 -mt-32`} />
+            <div className={`absolute top-0 right-0 w-64 h-64 bg-${theme.accent}-500/5 blur-[100px] -mr-32 -mt-32`} />
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 relative z-10">
-                {/* Left Column: Verification Identity */}
                 <div className="lg:col-span-5 space-y-8 flex flex-col justify-center border-b lg:border-b-0 lg:border-r border-zinc-900 pb-10 lg:pb-0 lg:pr-10">
                     <div className="flex items-center gap-3">
                         <div className={`p-3 rounded-xl ${isQuadLock ? 'bg-cyan-500/20 border border-cyan-500/40' : 'bg-zinc-900 border border-zinc-800'}`}>
                             {isQuadLock ? <Crown className="w-6 h-6 text-cyan-400" /> : <Shield className="w-6 h-6 text-zinc-500" />}
                         </div>
                         <div>
-                            <h2 className={`text-[10px] font-black uppercase tracking-[0.3em] ${analysis.provenance === 'HEURISTIC_FALLBACK' ? 'text-amber-500' : (isQuadLock ? 'text-cyan-500' : 'text-zinc-500')}`}>
-                                {analysis.provenance === 'HEURISTIC_FALLBACK' ? 'Historical Baseline Protocol' : (isQuadLock ? 'Nuclear Fortress Protocol' : 'Standard Verification')}
+                            <h2 className={`text-[10px] font-black uppercase tracking-[0.3em] ${theme.status}`}>
+                                {isFallback ? 'Historical Baseline Analysis' : (isQuadLock ? 'Consolidated High-Surety Signal' : 'Standard Logic Verification')}
                             </h2>
                             <p className="text-xl font-black text-white uppercase tracking-tight">
-                                {analysis.provenance === 'HEURISTIC_FALLBACK' ? 'Heuristic Analysis' : (isQuadLock ? 'Quad-Lock Active' : 'Pre-Signal Status')}
+                                {isFallback ? 'Deterministic Mode' : (isQuadLock ? 'Multi-Model Lock' : 'Signal Processing')}
                             </p>
                         </div>
                     </div>
@@ -95,7 +97,6 @@ export const ProtocolStatusBox: React.FC<ProtocolStatusBoxProps> = ({ analysis }
                     </div>
                 </div>
 
-                {/* Right Column: Narrative & Physics */}
                 <div className="lg:col-span-7 space-y-8">
                     <div className="space-y-4">
                         <div className="flex items-center gap-2">
@@ -114,18 +115,16 @@ export const ProtocolStatusBox: React.FC<ProtocolStatusBoxProps> = ({ analysis }
                     </div>
 
                     <div className="flex flex-wrap gap-4 pt-4 border-t border-zinc-900">
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900/50 rounded-lg border border-zinc-800">
-                            <Activity className="w-3 h-3 text-cyan-500" />
-                            <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Tactical Drift: {analysis.context.tacticalDrift}</span>
-                        </div>
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900/50 rounded-lg border border-zinc-800">
-                            <Zap className="w-3 h-3 text-amber-500" />
-                            <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Market Entropy: {analysis.marketIndicators.volume}</span>
-                        </div>
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900/50 rounded-lg border border-zinc-800">
-                            <Shield className="w-3 h-3 text-emerald-500" />
-                            <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Physics State: {analysis.context.weather} Stable</span>
-                        </div>
+                        {[
+                            { icon: Activity, color: 'cyan', label: 'Tactical Drift', value: analysis.context.tacticalDrift },
+                            { icon: Zap, color: 'amber', label: 'Market Entropy', value: analysis.marketIndicators.volume },
+                            { icon: Shield, color: 'emerald', label: 'Physics State', value: `${analysis.context.weather} Stable` }
+                        ].map((item, idx) => (
+                            <div key={idx} className="flex items-center gap-2 px-3 py-1.5 bg-zinc-900/50 rounded-lg border border-zinc-800">
+                                <item.icon className={`w-3 h-3 text-${item.color}-500`} />
+                                <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">{item.label}: {item.value}</span>
+                            </div>
+                        ))}
                     </div>
                 </div>
             </div>

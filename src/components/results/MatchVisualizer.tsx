@@ -10,13 +10,10 @@ interface MatchVisualizerProps {
 }
 
 export const MatchVisualizer: React.FC<MatchVisualizerProps> = ({ path, isOver = true, provenance }) => {
-    const containerClasses = isOver 
-        ? "space-y-6 bg-blue-950/20 p-6 rounded-2xl border border-blue-900/30"
-        : "space-y-6 bg-emerald-950/20 p-6 rounded-2xl border border-emerald-900/30";
+    const theme = isOver ? 'blue' : 'emerald';
     
-    const labelClasses = isOver 
-        ? "flex items-center justify-between text-[10px] uppercase font-black tracking-[0.2em] text-blue-900"
-        : "flex items-center justify-between text-[10px] uppercase font-black tracking-[0.2em] text-emerald-900";
+    const containerClasses = `space-y-6 bg-${theme}-950/20 p-6 rounded-2xl border border-${theme}-900/30`;
+    const labelClasses = `flex items-center justify-between text-[10px] uppercase font-black tracking-[0.2em] text-${theme}-900`;
 
     const getStateColor = (state: string) => {
         switch (state) {
@@ -49,20 +46,20 @@ export const MatchVisualizer: React.FC<MatchVisualizerProps> = ({ path, isOver =
                         className={`flex-1 rounded-t-lg bg-gradient-to-t ${getStateColor(step.state)} opacity-70 hover:opacity-100 transition-opacity cursor-crosshair relative group shadow-lg`}
                     >
                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 hidden group-hover:block z-20">
-                            <div className={`bg-zinc-950 border ${isOver ? 'border-emerald-900/50' : 'border-blue-900/50'} p-3 rounded-xl shadow-2xl whitespace-nowrap`}>
-                                <p className={`text-[10px] font-black ${isOver ? 'text-emerald-500' : 'text-blue-500'} uppercase tracking-widest mb-2 pb-1 border-b border-zinc-800`}>
-                                    {step.state.replace(/_/g, ' ')}
-                                </p>
-                                <div className="flex items-center justify-between gap-6">
-                                    <span className={`text-[10px] ${isOver ? 'text-emerald-900' : 'text-blue-900'} font-bold uppercase`}>Energy: <span className="text-white">{step.intensity?.toFixed(1) || '0.0'}</span></span>
-                                    <span className={`text-[10px] ${isOver ? 'text-emerald-900' : 'text-blue-900'} font-bold uppercase`}>Surety: <span className={isOver ? 'text-emerald-500' : 'text-blue-500'}>{((step.confidence || 0) * 100).toFixed(0)}%</span></span>
+                                <div className={`bg-zinc-950 border border-${theme}-900/50 p-3 rounded-xl shadow-2xl whitespace-nowrap`}>
+                                    <p className={`text-[10px] font-black text-${theme}-500 uppercase tracking-widest mb-2 pb-1 border-b border-zinc-800`}>
+                                        {step.state.replace(/_/g, ' ')}
+                                    </p>
+                                    <div className="flex items-center justify-between gap-6">
+                                        <span className={`text-[10px] text-${theme}-900 font-bold uppercase`}>Energy: <span className="text-white">{step.intensity?.toFixed(1) || '0.0'}</span></span>
+                                        <span className={`text-[10px] text-${theme}-900 font-bold uppercase`}>Surety: <span className={`text-${theme}-500`}>{((step.confidence || 0) * 100).toFixed(0)}%</span></span>
+                                    </div>
                                 </div>
-                            </div>
                         </div>
                     </motion.div>
                 ))}
             </div>
-            <div className={`grid grid-cols-4 gap-2 text-[10px] uppercase tracking-[0.3em] font-black ${isOver ? 'text-emerald-950' : 'text-blue-950'} pt-2 text-center`}>
+            <div className={`grid grid-cols-4 gap-2 text-[10px] uppercase tracking-[0.3em] font-black text-${theme}-950 pt-2 text-center`}>
                 <span>00:00</span><span>30:00</span><span>60:00</span><span>90:00</span>
             </div>
         </div>

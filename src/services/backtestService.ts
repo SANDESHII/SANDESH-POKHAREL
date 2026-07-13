@@ -53,240 +53,96 @@ import { LogisticEnsemble } from '../ensemble/secondModel';
 
 export class BacktestService {
     private static parseCSV(csv: string): HistoricalMatch[] {
-        const lines = csv.split('\n');
-        const headers = lines[0].split(',');
-        const homeIdx = headers.indexOf('HomeTeam');
-        const awayIdx = headers.indexOf('AwayTeam');
-        const dateIdx = headers.indexOf('Date');
-        const hgIdx = headers.indexOf('FTHG');
-        const agIdx = headers.indexOf('FTAG');
-        const divIdx = headers.indexOf('Div');
-        const over25Idx = headers.indexOf('Avg>2.5');
-        const under25Idx = headers.indexOf('Avg<2.5');
+        const lines = csv.split('\n').filter(l => l.trim());
+        const h = lines[0].split(',');
+        const idx = { h: h.indexOf('HomeTeam'), a: h.indexOf('AwayTeam'), d: h.indexOf('Date'), hg: h.indexOf('FTHG'), ag: h.indexOf('FTAG'), div: h.indexOf('Div'), o25: h.indexOf('Avg>2.5'), u25: h.indexOf('Avg<2.5') };
 
-        return lines.slice(1)
-            .filter(line => line.trim() !== '')
-            .map(line => {
-                const parts = line.split(',');
-                // Simple date conversion DD/MM/YYYY to ISO
-                const dateParts = parts[dateIdx].split('/');
-                const isoDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
-                
-                return {
-                    date: isoDate,
-                    homeTeam: parts[homeIdx],
-                    awayTeam: parts[awayIdx],
-                    actualScore: [parseInt(parts[hgIdx]), parseInt(parts[agIdx])] as [number, number],
-                    league: parts[divIdx] === 'E0' ? 'Premier League' : parts[divIdx],
-                    context: { 
-                        weather: "Clear", 
-                        stakes: "STANDARD", 
-                        marketSentiment: "Neutral", 
-                        tacticalDrift: "STABLE" 
-                    },
-                    odds: over25Idx !== -1 ? {
-                        over25: parseFloat(parts[over25Idx]),
-                        under25: parseFloat(parts[under25Idx])
-                    } : undefined
-                };
-            })
-            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        return lines.slice(1).map(line => {
+            const p = line.split(','), dp = p[idx.d].split('/');
+            return {
+                date: `${dp[2]}-${dp[1]}-${dp[0]}`, homeTeam: p[idx.h], awayTeam: p[idx.a],
+                actualScore: [parseInt(p[idx.hg]), parseInt(p[idx.ag])] as [number, number],
+                league: p[idx.div] === 'E0' ? 'Premier League' : p[idx.div],
+                context: { weather: "Clear", stakes: "STANDARD", marketSentiment: "Neutral", tacticalDrift: "STABLE" },
+                odds: idx.o25 !== -1 ? { over25: parseFloat(p[idx.o25]), under25: parseFloat(p[idx.u25]) } : undefined
+            };
+        }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     }
 
     static async runBacktest(): Promise<BacktestSummary> {
-        const csvPath = path.join(process.cwd(), 'src/data/historical_pl_2324.csv');
-        const csvData = fs.readFileSync(csvPath, 'utf8');
-        const allMatches = this.parseCSV(csvData);
+        const csv = fs.readFileSync(path.join(process.cwd(), 'src/data/historical_pl_2324.csv'), 'utf8');
+        const all = this.parseCSV(csv), samples = all.slice(0, 200);
         
-        // We only backtest a subset to keep it fast, but significant enough (N=150)
-        const samples = allMatches.slice(0, 200);
-        
-        // Reset state for clean walk-forward
         SignalFilter.setCollection('backtest_teamStates');
         await SignalFilter.reset();
 
-        // 0. Pre-calculate Rho for the backtest period
-        const teamAvgs = new Map<string, { scored: number, count: number }>();
-        allMatches.forEach(m => {
-            const h = teamAvgs.get(m.homeTeam) || { scored: 0, count: 0 };
-            h.scored += m.actualScore[0];
-            h.count++;
-            teamAvgs.set(m.homeTeam, h);
-
-            const a = teamAvgs.get(m.awayTeam) || { scored: 0, count: 0 };
-            a.scored += m.actualScore[1];
-            a.count++;
-            teamAvgs.set(m.awayTeam, a);
+        const avgs = new Map<string, { s: number, n: number }>();
+        all.forEach(m => {
+            [[m.homeTeam, m.actualScore[0]], [m.awayTeam, m.actualScore[1]]].forEach(([t, s]) => {
+                const entry = avgs.get(t as string) || { s: 0, n: 0 };
+                entry.s += s as number; entry.n++;
+                avgs.set(t as string, entry);
+            });
         });
 
-        const fitInputs = allMatches.map(m => ({
-            x: m.actualScore[0],
-            y: m.actualScore[1],
-            lambda: teamAvgs.get(m.homeTeam)!.scored / teamAvgs.get(m.homeTeam)!.count,
-            mu: teamAvgs.get(m.awayTeam)!.scored / teamAvgs.get(m.awayTeam)!.count
-        }));
-
-        const rhoData = DixonColes.fitRho(fitInputs);
-        console.log(`[BACKTEST] Fitted Rho: ${rhoData.rho.toFixed(4)}`);
-
-        // 1. Train LogisticEnsemble on a training set (first 100 matches)
-        const trainingMatches = allMatches.slice(0, 100).map(m => ({
+        const rhoData = DixonColes.fitRho(all.map(m => ({ x: m.actualScore[0], y: m.actualScore[1], lambda: avgs.get(m.homeTeam)!.s / avgs.get(m.homeTeam)!.n, mu: avgs.get(m.awayTeam)!.s / avgs.get(m.awayTeam)!.n })));
+        
+        await LogisticEnsemble.train(all.slice(0, 100).map(m => ({
             home: IngestionService.standardize({ ...getTeamBaseline(m.homeTeam), name: m.homeTeam }, { adjustmentA: 1, adjustmentB: 1 }),
             away: IngestionService.standardize({ ...getTeamBaseline(m.awayTeam), name: m.awayTeam }, { adjustmentA: 1, adjustmentB: 1 }),
-            context: m.context,
-            isOver15: (m.actualScore[0] + m.actualScore[1]) > 1.5
-        }));
-        await LogisticEnsemble.train(trainingMatches);
-        
-        const results: BacktestSummary["matches"] = [];
-        let totalBrier = 0;
-        let highPurityBrier = 0;
-        let highPurityCount = 0;
-        let overCorrect = 0;
-        let underCorrect = 0;
-        let totalConf = 0;
+            context: m.context, isOver15: (m.actualScore[0] + m.actualScore[1]) > 1.5
+        })));
 
-        // Market Edge Segments
-        const edgeSegments = [
-            { name: 'High Edge (> 5 pts)', min: 0.05, max: 1.0, count: 0, hits: 0, sumEdge: 0 },
-            { name: 'Moderate Edge (2-5 pts)', min: 0.02, max: 0.05, count: 0, hits: 0, sumEdge: 0 },
-            { name: 'No/Neg Edge (< 2 pts)', min: -1.0, max: 0.02, count: 0, hits: 0, sumEdge: 0 }
-        ];
+        const results: BacktestSummary["matches"] = [], bins = Array.from({ length: 10 }, (_, i) => ({ min: i * 0.1, max: (i + 1) * 0.1, n: 0, h: 0, p: 0 }));
+        const edges = [{ n: 'High', min: 0.05, max: 1, c: 0, h: 0, e: 0 }, { n: 'Mod', min: 0.02, max: 0.05, c: 0, h: 0, e: 0 }, { n: 'No', min: -1, max: 0.02, c: 0, h: 0, e: 0 }];
+        let totalB = 0, hpB = 0, hpC = 0, ovC = 0, unC = 0, totalC = 0;
 
-        // Calibration Bins
-        const bins = Array.from({ length: 10 }, (_, i) => ({
-            min: i * 0.1,
-            max: (i + 1) * 0.1,
-            n: 0,
-            hits: 0,
-            sumProb: 0
-        }));
-
-        for (const match of samples) {
-            // 1. Get current states for these teams
-            const hBase = getTeamBaseline(match.homeTeam);
-            const aBase = getTeamBaseline(match.awayTeam);
+        for (const m of samples) {
+            const hB = getTeamBaseline(m.homeTeam), aB = getTeamBaseline(m.awayTeam);
+            const hS = await SignalFilter.get(m.homeTeam), aS = await SignalFilter.get(m.awayTeam);
+            const hD = IngestionService.standardize({ ...hB, name: m.homeTeam, npxG: hS?.estimatedNpxG || hB.npxG, npxGVariance: hS?.variance || 0.5 }, { adjustmentA: 0.5, adjustmentB: 0.5 });
+            const aD = IngestionService.standardize({ ...aB, name: m.awayTeam, npxG: aS?.estimatedNpxG || aB.npxG, npxGVariance: aS?.variance || 0.5 }, { adjustmentA: 0.5, adjustmentB: 0.5 });
             
-            // In walk-forward, we "ingest" data as it would have appeared
-            // We use the latent estimated state if it exists, else baseline
-            const hState = await SignalFilter.get(match.homeTeam);
-            const aState = await SignalFilter.get(match.awayTeam);
+            const math = MatchEngine.calculateMatchExpectancy(hD, aD, { ...m.context, date: m.date }, undefined, rhoData);
+            const tg = m.actualScore[0] + m.actualScore[1], isO15 = tg > 1.5, isU35 = tg < 3.5, prob = math.probability / 100;
+            const outcome = math.predictionType === 'OVER_15' ? isO15 : isU35;
+            const brier = Math.pow(prob - (outcome ? 1 : 0), 2);
 
-            const ingested = {
-                home: {
-                    ...hBase,
-                    name: match.homeTeam,
-                    npxG: hState ? hState.estimatedNpxG : hBase.npxG,
-                    npxGVariance: hState ? hState.variance : 0.5,
-                    dataPurity: hBase.purity
-                },
-                away: {
-                    ...aBase,
-                    name: match.awayTeam,
-                    npxG: aState ? aState.estimatedNpxG : aBase.npxG,
-                    npxGVariance: aState ? aState.variance : 0.5,
-                    dataPurity: aBase.purity
-                },
-                adjustment: { adjustmentA: 0.5, adjustmentB: 0.5, reliabilityScore: 0.9 }
-            };
-
-            const hD = IngestionService.standardize(ingested.home, ingested.adjustment);
-            const aD = IngestionService.standardize(ingested.away, ingested.adjustment);
-            
-            // 1. Predict
-            const math = MatchEngine.calculateMatchExpectancy(hD, aD, { ...match.context, date: match.date }, undefined, rhoData);
-            
-            const totalGoals = match.actualScore[0] + match.actualScore[1];
-            const isOver15 = totalGoals > 1.5;
-            const isUnder35 = totalGoals < 3.5;
-            const predProb = math.probability / 100;
-            const predType = math.predictionType;
-
-            // 2. Market Edge Calculation (using Over 2.5 if available for analysis)
-            let marketEdge = 0;
-            if (match.odds) {
-                // Calculate model's Over 2.5 prob for market comparison
-                const hScoring = hD.npxG * (1 / aD.defensiveStability);
-                const aScoring = aD.npxG * (1 / hD.defensiveStability);
-                const matrix = DixonColes.calculateScoreMatrix(hScoring, aScoring, rhoData.rho);
-                const modelOver25 = DixonColes.calculateOverUnder(matrix, 2.5);
-
-                const overImplied = EdgeCalculator.impliedProbability(match.odds.over25);
-                const underImplied = EdgeCalculator.impliedProbability(match.odds.under25);
-                const [trueOver25] = EdgeCalculator.removeVig([overImplied, underImplied]);
-                
-                marketEdge = EdgeCalculator.calculateEdge(modelOver25, trueOver25);
-                
-                // Track in segments
-                const seg = edgeSegments.find(s => marketEdge >= s.min && marketEdge < s.max);
-                if (seg) {
-                    seg.count++;
-                    seg.sumEdge += marketEdge;
-                    if (totalGoals > 2.5) seg.hits++;
-                }
+            let edge = 0;
+            if (m.odds) {
+                const matrix = DixonColes.calculateScoreMatrix(hD.npxG / aD.defensiveStability, aD.npxG / hD.defensiveStability, rhoData.rho);
+                const [to25] = EdgeCalculator.removeVig([EdgeCalculator.impliedProbability(m.odds.over25), EdgeCalculator.impliedProbability(m.odds.under25)]);
+                edge = EdgeCalculator.calculateEdge(DixonColes.calculateOverUnder(matrix, 2.5), to25);
+                const s = edges.find(e => edge >= e.min && edge < e.max);
+                if (s) { s.c++; s.e += edge; if (tg > 2.5) s.h++; }
             }
 
-            // 3. Score Calibration
-            const outcome = predType === 'OVER_15' ? isOver15 : isUnder35;
-            const brier = Math.pow(predProb - (outcome ? 1 : 0), 2);
-            totalBrier += brier;
+            totalB += brier;
+            if (hB.purity === 1 && aB.purity === 1) { hpB += brier; hpC++; }
+            const bin = bins.find(b => prob >= b.min && prob < b.max) || bins[9];
+            bin.n++; bin.p += prob; if (outcome) bin.h++;
+            if (math.predictionType === 'OVER_15' && isO15) ovC++;
+            if (math.predictionType === 'UNDER_35' && isU35) unC++;
+            totalC += math.probability;
+            results.push({ match: m, prediction: { ...math, probability: Math.round(math.probability) } as any, isOver15Correct: isO15, isUnder35Correct: isU35, marketEdge: edge });
 
-            if (hBase.purity === 1.0 && aBase.purity === 1.0) {
-                highPurityBrier += brier;
-                highPurityCount++;
-            }
-
-            const bin = bins.find(b => predProb >= b.min && predProb < b.max) || bins[9];
-            bin.n++;
-            bin.sumProb += predProb;
-            if (outcome) bin.hits++;
-
-            if (predType === 'OVER_15' && isOver15) overCorrect++;
-            if (predType === 'UNDER_35' && isUnder35) underCorrect++;
-            totalConf += math.probability;
-
-            results.push({
-                match,
-                prediction: { ...math, probability: Math.round(math.probability) } as any,
-                isOver15Correct: isOver15,
-                isUnder35Correct: isUnder35,
-                marketEdge
-            });
-
-            // 4. Update Loop (Walk-Forward)
-            // Update the SignalFilter with the ACTUAL observed result to influence future predictions
-            await SignalFilter.updateStateAfterMatch(match.homeTeam, match.actualScore[0], match.actualScore[1], match.date, 1.0, false);
-            await SignalFilter.updateStateAfterMatch(match.awayTeam, match.actualScore[1], match.actualScore[0], match.date, 1.0, false);
+            await SignalFilter.updateStateAfterMatch(m.homeTeam, m.actualScore[0], m.actualScore[1], m.date, 1.0, false);
+            await SignalFilter.updateStateAfterMatch(m.awayTeam, m.actualScore[1], m.actualScore[0], m.date, 1.0, false);
         }
 
-        // Persist the final latent states to Firestore after the walk-forward is complete (SignalFilter already does this per update, but we keep this for compatibility or batch safety)
         await SignalFilter.saveAll(await SignalFilter.getAll());
-
-        // Restore production collection names
         SignalFilter.setCollection('teamStates');
 
         return {
             totalMatches: samples.length,
-            over15Accuracy: (overCorrect / samples.filter(m => results.find(r => r.match === m)?.prediction.predictionType === 'OVER_15').length) * 100,
-            under35Accuracy: (underCorrect / samples.filter(m => results.find(r => r.match === m)?.prediction.predictionType === 'UNDER_35').length) * 100,
-            averageConfidence: totalConf / samples.length,
-            brierScore: totalBrier / samples.length,
-            highPurityBrierScore: highPurityCount > 0 ? highPurityBrier / highPurityCount : 0,
-            highPurityMatches: highPurityCount,
-            calibrationBins: bins.filter(b => b.n > 0).map(b => ({
-                bin: `${(b.min * 100).toFixed(0)}-${(b.max * 100).toFixed(0)}%`,
-                hitRate: b.hits / b.n,
-                expected: b.sumProb / b.n,
-                n: b.n
-            })),
-            edgeSegments: edgeSegments.map(s => ({
-                segment: s.name,
-                count: s.count,
-                hits: s.hits,
-                hitRate: s.count > 0 ? s.hits / s.count : 0,
-                avgEdge: s.count > 0 ? s.sumEdge / s.count : 0
-            })),
+            over15Accuracy: (ovC / results.filter(r => r.prediction.predictionType === 'OVER_15').length) * 100,
+            under35Accuracy: (unC / results.filter(r => r.prediction.predictionType === 'UNDER_35').length) * 100,
+            averageConfidence: totalC / samples.length, brierScore: totalB / samples.length,
+            highPurityBrierScore: hpC > 0 ? hpB / hpC : 0, highPurityMatches: hpC,
+            calibrationBins: bins.filter(b => b.n > 0).map(b => ({ bin: `${(b.min * 100).toFixed(0)}-${(b.max * 100).toFixed(0)}%`, hitRate: b.h / b.n, expected: b.p / b.n, n: b.n })),
+            edgeSegments: edges.map(s => ({ segment: s.n, count: s.c, hits: s.h, hitRate: s.c > 0 ? s.h / s.c : 0, avgEdge: s.c > 0 ? s.e / s.c : 0 })),
             matches: results
         };
     }
 }
+
