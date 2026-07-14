@@ -34,7 +34,7 @@ export class MatchEngine {
         const matrix = DixonColes.calculateScoreMatrix(hScoring, aScoring, rho);
         
         const pOver15 = DixonColes.calculateOverUnder(matrix, 1.5);
-        const pUnder35 = DixonColes.calculateOverUnder(matrix, 3.5);
+        const pUnder35 = 1 - DixonColes.calculateOverUnder(matrix, 3.5);
         const outcomes = DixonColes.calculateMatchOutcomes(matrix);
 
         // 3. Ensemble Verification
