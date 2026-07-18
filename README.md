@@ -1,4 +1,4 @@
-# Match Report: Football Prediction & Analysis Engine
+# Quantitative Football AI: Football Prediction & Analysis Engine
 
 A professional-grade football analytics platform and prediction engine. This application leverages advanced statistical modeling, Bayesian state estimation, and AI-driven insights to identify value in football markets.
 

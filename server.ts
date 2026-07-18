@@ -58,7 +58,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[SERVER] Match Report Engine Active: http://localhost:${PORT}`);
+    console.log(`[SERVER] Quantitative Football AI Engine Active: http://localhost:${PORT}`);
   });
 }
 

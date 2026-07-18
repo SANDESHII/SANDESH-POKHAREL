@@ -28,6 +28,17 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                 container: 'bg-blue-950/10 border-blue-500/20'
             };
         }
+        if (analysis.predictionType === 'UNDER_35') {
+            return { 
+                accent: 'purple', 
+                text: 'text-purple-400', 
+                title: 'text-purple-300', 
+                border: 'border-purple-500/50', 
+                bg: 'bg-purple-950/40', 
+                glow: 'drop-shadow-[0_0_25px_rgba(168,85,247,0.5)]',
+                container: 'bg-purple-950/10 border-purple-500/20'
+            };
+        }
         if (analysis.isSureshot || analysis.lockCount === 4) {
             return { 
                 accent: 'cyan', 
@@ -55,12 +66,17 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
 
     return (
         <div className={`space-y-10 p-8 rounded-3xl border transition-all duration-700 ${theme.container}`}>
-            {isOver15 && (
+            {isOver15 ? (
                 <div className="flex items-center gap-3 px-4 py-2 bg-blue-600/20 border border-blue-500/30 rounded-full w-fit mb-4">
                     <Zap className="w-4 h-4 text-blue-400 animate-pulse" />
                     <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em]">Over 1.5 Target Detected</span>
                 </div>
-            )}
+            ) : pType === 'UNDER_35' ? (
+                <div className="flex items-center gap-3 px-4 py-2 bg-purple-600/20 border border-purple-500/30 rounded-full w-fit mb-4">
+                    <Shield className="w-4 h-4 text-purple-400 animate-pulse" />
+                    <span className="text-[10px] font-black text-purple-400 uppercase tracking-[0.3em]">Under 3.5 Target Detected</span>
+                </div>
+            ) : null}
             
             {analysis.dataSource === 'FALLBACK_STATIC' && (
                 <div className="flex items-center gap-3 px-4 py-2 bg-amber-600/20 border border-amber-500/30 rounded-full w-fit mb-4">

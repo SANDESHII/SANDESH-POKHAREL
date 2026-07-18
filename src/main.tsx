@@ -14,7 +14,7 @@ const Header: React.FC = () => (
         <div className="max-w-7xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
                 <Activity className="w-5 h-5 text-emerald-500" />
-                <h1 className="text-sm font-black tracking-[0.2em] text-white uppercase">Match <span className="text-emerald-500">Report</span></h1>
+                <h1 className="text-sm font-black tracking-[0.2em] text-white uppercase">Quantitative <span className="text-emerald-500">Football AI</span></h1>
             </div>
         </div>
     </header>
@@ -204,7 +204,7 @@ const App: React.FC = () => {
                             <Activity className="w-3 h-3" /> Analysis
                         </div>
                         <h2 className="text-6xl font-black tracking-tighter text-white uppercase">
-                            Match <span className="text-emerald-500">Report</span>
+                            Quantitative <span className="text-emerald-500">Football AI</span>
                         </h2>
                         <p className="text-zinc-600 font-black text-[10px] tracking-[0.4em] uppercase">
                             Tactical Patterns // Verified Projections
@@ -254,7 +254,7 @@ const App: React.FC = () => {
 
             <footer className="max-w-7xl mx-auto px-6 py-16 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-8 text-zinc-800">
                 <div className="text-[10px] font-black uppercase tracking-widest">
-                    &copy; 2024 Match Report. PROPRIETARY DATA.
+                    &copy; 2024 Quantitative Football AI. PROPRIETARY DATA.
                 </div>
             </footer>
         </div>

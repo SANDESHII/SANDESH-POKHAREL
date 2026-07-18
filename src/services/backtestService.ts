@@ -90,7 +90,9 @@ export class BacktestService {
         await LogisticEnsemble.train(all.slice(0, 100).map(m => ({
             home: IngestionService.standardize({ ...getTeamBaseline(m.homeTeam), name: m.homeTeam }, { adjustmentA: 1, adjustmentB: 1 }),
             away: IngestionService.standardize({ ...getTeamBaseline(m.awayTeam), name: m.awayTeam }, { adjustmentA: 1, adjustmentB: 1 }),
-            context: m.context, isOver15: (m.actualScore[0] + m.actualScore[1]) > 1.5
+            context: m.context, 
+            isOver15: (m.actualScore[0] + m.actualScore[1]) > 1.5,
+            isUnder35: (m.actualScore[0] + m.actualScore[1]) < 3.5
         })));
 
         const results: BacktestSummary["matches"] = [], bins = Array.from({ length: 10 }, (_, i) => ({ min: i * 0.1, max: (i + 1) * 0.1, n: 0, h: 0, p: 0 }));
@@ -135,8 +137,12 @@ export class BacktestService {
 
         return {
             totalMatches: samples.length,
-            over15Accuracy: (ovC / results.filter(r => r.prediction.predictionType === 'OVER_15').length) * 100,
-            under35Accuracy: (unC / results.filter(r => r.prediction.predictionType === 'UNDER_35').length) * 100,
+            over15Accuracy: results.filter(r => r.prediction.predictionType === 'OVER_15').length > 0
+                ? (ovC / results.filter(r => r.prediction.predictionType === 'OVER_15').length) * 100
+                : 0,
+            under35Accuracy: results.filter(r => r.prediction.predictionType === 'UNDER_35').length > 0
+                ? (unC / results.filter(r => r.prediction.predictionType === 'UNDER_35').length) * 100
+                : 0,
             averageConfidence: totalC / samples.length, brierScore: totalB / samples.length,
             highPurityBrierScore: hpC > 0 ? hpB / hpC : 0, highPurityMatches: hpC,
             calibrationBins: bins.filter(b => b.n > 0).map(b => ({ bin: `${(b.min * 100).toFixed(0)}-${(b.max * 100).toFixed(0)}%`, hitRate: b.h / b.n, expected: b.p / b.n, n: b.n })),

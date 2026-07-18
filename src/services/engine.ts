@@ -37,16 +37,26 @@ export class MatchEngine {
         const pUnder35 = 1 - DixonColes.calculateOverUnder(matrix, 3.5);
         const outcomes = DixonColes.calculateMatchOutcomes(matrix);
 
+        const type: 'OVER_15' | 'UNDER_35' = (pOver15 / 0.72) > (pUnder35 / 0.76) ? 'OVER_15' : 'UNDER_35';
+        const prob = type === 'OVER_15' ? pOver15 : pUnder35;
+
         // 3. Ensemble Verification
-        const logisticPOver15 = LogisticEnsemble.predictOver15(home, away, context);
-        const agreement = AgreementScorer.calculate(pOver15, logisticPOver15);
+        const logisticProb = type === 'OVER_15' 
+            ? LogisticEnsemble.predictOver15(home, away, context)
+            : LogisticEnsemble.predictUnder35(home, away, context);
+            
+        const agreement = AgreementScorer.calculate(prob, logisticProb);
 
         // 4. Monte Carlo Simulation (Parameter Uncertainty Propagation)
+        const threshold = type === 'OVER_15' ? 1.5 : 3.5;
+        
         const simulation = MonteCarloSimulator.run(
             hScoring, 
             aScoring, 
             home.npxGVariance ?? 0.15, 
             away.npxGVariance ?? 0.15,
+            threshold,
+            type === 'UNDER_35',
             rho,
             sigmaRho
         );
@@ -56,8 +66,8 @@ export class MatchEngine {
         const optimalPath = viterbiPaths[0];
 
         // 5. Multi-Lock Verification
-        const lock1 = pOver15 > 0.72 || pUnder35 > 0.76;
-        const lock2 = agreement.divergence < 0.10; // Genuine independent confirmation (< 10 pts)
+        const lock1 = prob > (type === 'OVER_15' ? 0.72 : 0.76);
+        const lock2 = agreement.divergence < 0.12; // Genuine independent confirmation
         const lock3 = (home.form.reduce((a, b) => a + b, 0) / home.form.length) > 0.45;
         const lock4 = (home.dataPurity ?? 0.35) > 0.4 && (away.dataPurity ?? 0.35) > 0.4;
         const lock5 = simulation.stdDev < 1.8; 
@@ -65,13 +75,6 @@ export class MatchEngine {
         const lockCount = [lock1, lock2, lock3, lock4, lock5].filter(Boolean).length;
 
         // 6. Selection Logic
-        const oBaseline = 0.72;
-        const uBaseline = 0.76;
-        const oEdge = pOver15 / oBaseline;
-        const uEdge = pUnder35 / uBaseline;
-        
-        const type: 'OVER_15' | 'UNDER_35' = oEdge > uEdge ? 'OVER_15' : 'UNDER_35';
-        const prob = type === 'OVER_15' ? pOver15 : pUnder35;
         
         // STRICT HONESTY: If purity is < 20%, we withhold the prediction entirely
         const avgPurity = ((home.dataPurity ?? 0) + (away.dataPurity ?? 0)) / 2;
@@ -112,6 +115,7 @@ export class MatchEngine {
         return {
             probability: Math.round(prob * 100),
             summary,
+            prediction: predictionLabel,
             predictionType: isVoid ? 'VOID' : type,
             predictionLabel,
             homeXG: hScoring,

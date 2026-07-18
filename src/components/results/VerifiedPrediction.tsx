@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { motion } from 'motion/react';
-import { Target, Crown, Zap } from 'lucide-react';
+import { Target, Crown, Zap, Shield } from 'lucide-react';
 import { AnalysisResult } from '../../types';
 
 interface VerifiedPredictionProps {
@@ -14,6 +14,7 @@ export const VerifiedPrediction: React.FC<VerifiedPredictionProps> = ({ analysis
 
     const isQuadLock = analysis.isSureshot || analysis.lockCount === 4;
     const isOver15 = analysis.predictionType === 'OVER_15';
+    const isUnder35 = analysis.predictionType === 'UNDER_35';
     
     // Define theme based on status
     const getTheme = () => {
@@ -39,6 +40,17 @@ export const VerifiedPrediction: React.FC<VerifiedPredictionProps> = ({ analysis
             label: 'OVER 1.5 TARGET',
             badgeLabel: 'HIGH CONVERGENCE'
         };
+        if (isUnder35) return {
+            accent: 'purple-400',
+            bg: 'bg-purple-500/10',
+            border: 'border-purple-500/50',
+            iconBg: 'bg-purple-500/20',
+            iconBorder: 'border-purple-500/40',
+            badge: 'bg-purple-500/20 border-purple-500/30 text-purple-400',
+            icon: Shield,
+            label: 'UNDER 3.5 TARGET',
+            badgeLabel: 'HIGH CONVERGENCE'
+        };
         return {
             accent: 'zinc-500',
             bg: 'bg-zinc-500/5',
@@ -59,7 +71,7 @@ export const VerifiedPrediction: React.FC<VerifiedPredictionProps> = ({ analysis
         <motion.div 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`${theme.bg} ${theme.border} border rounded-2xl p-8 space-y-6 relative overflow-hidden group mb-10 shadow-2xl ${(isQuadLock || isOver15) ? `ring-1 ${isQuadLock ? 'ring-cyan-500/20' : 'ring-blue-500/20'}` : ''}`}
+            className={`${theme.bg} ${theme.border} border rounded-2xl p-8 space-y-6 relative overflow-hidden group mb-10 shadow-2xl ${(isQuadLock || isOver15 || isUnder35) ? `ring-1 ${isQuadLock ? 'ring-cyan-500/20' : (isOver15 ? 'ring-blue-500/20' : 'ring-purple-500/20')}` : ''}`}
         >
             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                 <Icon className={`w-24 h-24 text-${theme.accent}`} />
