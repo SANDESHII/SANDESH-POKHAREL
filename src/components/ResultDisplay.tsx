@@ -92,7 +92,13 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                 <div className="lg:col-span-8 space-y-10">
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                         {[
-                            { label: "Probability", value: `${analysis.probability}%`, subValue: "CONFIDENCE", icon: Zap, purity: analysis.purity },
+                            { 
+                                label: "Probability", 
+                                value: `${analysis.probability}%`, 
+                                subValue: analysis.modelAudit.signalPurity > 0.95 ? "VERIFIED PROVIDER" : "QUANTITATIVE", 
+                                icon: analysis.modelAudit.signalPurity > 0.95 ? Shield : Zap, 
+                                purity: analysis.purity 
+                            },
                             { label: "Prediction", value: analysis.prediction?.replace(' GOALS', '') || "STABLE", subValue: "MARKET TYPE", icon: Target },
                             { label: "Min Goals", value: analysis.minimumExpectancy?.toFixed(2) || '0.00', subValue: "LOWER BOUND", icon: Shield },
                             { label: "Max Goals", value: analysis.potentialCeiling?.toFixed(2) || '0.00', subValue: "UPPER BOUND", icon: TrendingUp }
@@ -125,11 +131,11 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                                     </h4>
                                     <div className="grid grid-cols-3 gap-8">
                                         <div className="space-y-2">
-                                            <span className="text-[10px] text-zinc-600 uppercase font-black">xG</span>
+                                            <span className="text-[10px] text-zinc-600 uppercase font-black">ExG</span>
                                             <p className="text-3xl font-black text-white">{(idx === 0 ? analysis.homeXG : analysis.awayXG)?.toFixed(2) || '0.00'}</p>
                                         </div>
                                         <div className="space-y-2">
-                                            <span className="text-[10px] text-zinc-600 uppercase font-black">npxG</span>
+                                            <span className="text-[10px] text-zinc-600 uppercase font-black">npExG</span>
                                             <p className="text-3xl font-black text-zinc-400">{(team.npxG)?.toFixed(2) || '0.00'}</p>
                                         </div>
                                         <div className="space-y-2">
@@ -353,12 +359,105 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
             )}
             <div className="p-6 bg-zinc-950 border border-zinc-900 rounded-2xl">
                 <div className="flex items-center gap-3 mb-4">
+                    <TrendingUp className="w-4 h-4 text-emerald-500" />
+                    <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white">Rolling Form & Trends</h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {/* Home Form */}
+                    <div className="space-y-4">
+                        <div className="flex justify-between items-end">
+                            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{analysis.homeTeam.name}</span>
+                            <span className="text-[8px] font-black text-emerald-500/80 uppercase">Last 5 ExG</span>
+                        </div>
+                        <div className="flex items-end gap-1 h-12">
+                            {analysis.homeTeam.npxGSequence?.slice(-5).map((val, i) => (
+                                <div key={i} className="flex-1 bg-emerald-500/20 border-t border-emerald-500/40 rounded-t-sm transition-all hover:bg-emerald-500/40" style={{ height: `${Math.min(100, (val / 3) * 100)}%` }} />
+                            ))}
+                        </div>
+                    </div>
+                    {/* Away Form */}
+                    <div className="space-y-4">
+                        <div className="flex justify-between items-end">
+                            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{analysis.awayTeam.name}</span>
+                            <span className="text-[8px] font-black text-emerald-500/80 uppercase">Last 5 ExG</span>
+                        </div>
+                        <div className="flex items-end gap-1 h-12">
+                            {analysis.awayTeam.npxGSequence?.slice(-5).map((val, i) => (
+                                <div key={i} className="flex-1 bg-cyan-500/20 border-t border-cyan-500/40 rounded-t-sm transition-all hover:bg-cyan-500/40" style={{ height: `${Math.min(100, (val / 3) * 100)}%` }} />
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Tactical Edge Insights */}
+            {analysis.tacticalEdge && analysis.tacticalEdge.referee?.name !== 'PENDING' && (
+                <div className="p-6 bg-zinc-950 border border-zinc-900 rounded-2xl space-y-6">
+                    <div className="flex items-center gap-3">
+                        <Shield className="w-4 h-4 text-cyan-500" />
+                        <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white">Tactical Edge Insights</h3>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                        {/* Referee Tendencies */}
+                        <div className="space-y-4">
+                            <div className="flex justify-between items-center">
+                                <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Referee Tendency</span>
+                                <span className={`text-[8px] font-black px-2 py-0.5 rounded border uppercase tracking-widest ${
+                                    analysis.tacticalEdge.referee?.tendency === 'STRICT' ? 'text-rose-500 bg-rose-500/5 border-rose-500/20' :
+                                    analysis.tacticalEdge.referee?.tendency === 'LENIENT' ? 'text-emerald-500 bg-emerald-500/5 border-emerald-500/20' :
+                                    'text-amber-500 bg-amber-500/5 border-amber-500/20'
+                                }`}>
+                                    {analysis.tacticalEdge.referee?.tendency}
+                                </span>
+                            </div>
+                            <div className="p-4 bg-zinc-900/30 border border-zinc-900 rounded-xl">
+                                <p className="text-sm font-black text-white mb-1">{analysis.tacticalEdge.referee?.name}</p>
+                                <div className="flex gap-4">
+                                    <div className="space-y-1">
+                                        <p className="text-[8px] font-black text-zinc-600 uppercase tracking-widest">Cards</p>
+                                        <p className="text-xs font-bold text-zinc-400">{analysis.tacticalEdge.referee?.cardRate}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <p className="text-[8px] font-black text-zinc-600 uppercase tracking-widest">Penalties</p>
+                                        <p className="text-xs font-bold text-zinc-400">{analysis.tacticalEdge.referee?.penaltyRate}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Pressing Mechanics */}
+                        <div className="space-y-4">
+                            <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest block">Pressing Mechanics (PPDA)</span>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="p-4 bg-zinc-900/30 border border-zinc-900 rounded-xl">
+                                    <p className="text-[8px] font-black text-zinc-600 uppercase tracking-widest mb-2">{analysis.homeTeam.name}</p>
+                                    <div className="space-y-1">
+                                        <p className="text-xl font-black text-white">{analysis.tacticalEdge.pressing?.homePPDA}</p>
+                                        <p className="text-[8px] font-bold text-zinc-500 uppercase tracking-tighter">Line Height: {analysis.tacticalEdge.pressing?.homeLineHeight}</p>
+                                    </div>
+                                </div>
+                                <div className="p-4 bg-zinc-900/30 border border-zinc-900 rounded-xl">
+                                    <p className="text-[8px] font-black text-zinc-600 uppercase tracking-widest mb-2">{analysis.awayTeam.name}</p>
+                                    <div className="space-y-1">
+                                        <p className="text-xl font-black text-white">{analysis.tacticalEdge.pressing?.awayPPDA}</p>
+                                        <p className="text-[8px] font-bold text-zinc-500 uppercase tracking-tighter">Line Height: {analysis.tacticalEdge.pressing?.awayLineHeight}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <div className="p-6 bg-zinc-950 border border-zinc-900 rounded-2xl">
+                <div className="flex items-center gap-3 mb-4">
                     <Activity className="w-4 h-4 text-emerald-500" />
                     <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white">Quantitative Integrity Audit</h3>
                 </div>
                 <p className="text-[10px] text-zinc-500 leading-relaxed font-medium uppercase tracking-wider">
-                    All <span className="text-emerald-500">npxG</span> and <span className="text-emerald-500">xG</span> metrics are derived via multi-variate regression of shot quality, target conversion, and historical volatility. 
-                    Unlike simple goal-averaging, this model ground-truths expectations against raw frequency signals to ensure non-fabricated, high-fidelity projections.
+                    All <span className="text-emerald-500">npExG</span> and <span className="text-emerald-500">ExG</span> metrics are derived via a Bayesian regression of shot volume, on-target conversion, and historical goal frequency. 
+                    Unlike simple goal-averaging, this model ground-truths expectations against raw frequency signals to ensure high-fidelity statistical projections where granular provider data is absent.
                 </p>
             </div>
         </div>

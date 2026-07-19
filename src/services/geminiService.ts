@@ -9,6 +9,8 @@ import { TeamMatchInput } from "../ingestion/schema";
 import { LiveOddsProvider } from "../ingestion/sources/liveOddsProvider";
 import { WeatherProvider } from "../ingestion/sources/weatherProvider";
 import { TeamMappingService } from "./teamMappingService";
+import { VenueService } from "./venueService";
+import { RapidApiFootballProvider } from "../ingestion/sources/rapidApiFootballProvider";
 
 const PRIMARY_MODEL = 'gemini-3.5-flash'; 
 const SECONDARY_MODEL = 'gemini-flash-latest';
@@ -62,9 +64,35 @@ const analysisSchema = {
             required: ["homeOffenseDelta", "homeDefenseDelta", "awayOffenseDelta", "awayDefenseDelta", "logic"]
         },
         matchSummary: { type: Type.STRING, description: "A technical summary of the tactical physics of the game." },
-        predictionType: { type: Type.STRING, enum: ["OVER_15", "UNDER_35"] }
+        predictionType: { type: Type.STRING, enum: ["OVER_15", "UNDER_35"] },
+        tacticalEdge: {
+            type: Type.OBJECT,
+            properties: {
+                referee: {
+                    type: Type.OBJECT,
+                    properties: {
+                        name: { type: Type.STRING },
+                        cardRate: { type: Type.STRING, description: "e.g. 4.2 Yellows / Game" },
+                        penaltyRate: { type: Type.STRING, description: "e.g. 0.25 Pens / Game" },
+                        tendency: { type: Type.STRING, enum: ["STRICT", "LENIENT", "AVERAGE"] }
+                    },
+                    required: ["name", "cardRate", "penaltyRate", "tendency"]
+                },
+                pressing: {
+                    type: Type.OBJECT,
+                    properties: {
+                        homePPDA: { type: Type.STRING, description: "Passes Per Defensive Action" },
+                        awayPPDA: { type: Type.STRING },
+                        homeLineHeight: { type: Type.STRING, description: "e.g. 52.4m" },
+                        awayLineHeight: { type: Type.STRING }
+                    },
+                    required: ["homePPDA", "awayPPDA", "homeLineHeight", "awayLineHeight"]
+                }
+            },
+            required: ["referee", "pressing"]
+        }
     },
-    required: ["verifiedFacts", "reasonedAdjustments", "matchSummary", "predictionType"]
+    required: ["verifiedFacts", "reasonedAdjustments", "matchSummary", "predictionType", "tacticalEdge"]
 };
 
 const SystemLog = (msg: string) => console.log(`[QUANT_REASONER] ${msg}`);
@@ -72,16 +100,18 @@ const SystemLog = (msg: string) => console.log(`[QUANT_REASONER] ${msg}`);
 const SYSTEM_INSTRUCTION = `You are a REASONING LAYER for a high-frequency football quant shop.
 - CORE MISSION: Adjust GROUND TRUTH baselines based ONLY on REAL-TIME NEWS found via search.
 - DETERMINISM: You are strictly FORBIDDEN from generating or estimating historical team statistics (goals, xG, clean sheets). Use the provided baselines as the absolute truth.
-- SEARCH SCOPE: Your search is strictly limited to the targets defined in the prompt (Lineups, Injuries, Weather, Match Context). Do NOT search for or return any other statistical categories.
+- SEARCH SCOPE: Your search is strictly limited to the targets defined in the prompt (Lineups, Injuries, Weather, Match Context, Referee, Pressing Stats).
+- TACTICAL EDGE: Use FBref and related signals to identify 'PPDA' and 'Defensive Line Height'. Use Referee Assignment to identify 'Card Rates'.
 - CATEGORY A (FACTS): Report ONLY search findings into 'verifiedFacts'.
 - CATEGORY B (REASONING): Calculate 'reasonedAdjustments' (deltas). 
-  - Offense Delta: Negative if key attackers are out.
-  - Defense Delta: Positive if key defenders are out (indicating a higher expectancy to concede).
 - INTEGRITY: If search returns no meaningful news regarding a team, its deltas MUST be 0.0.`;
 
-const generateAnalysisPrompt = (req: any, baselines: any, date: string) => `
+const generateAnalysisPrompt = (req: any, baselines: any, date: string) => {
+    const venue = VenueService.getVenue(req.homeTeam);
+    return `
     DATE: ${date}
     MATCH: ${req.homeTeamName} vs ${req.awayTeamName} (League: ${req.league || 'Unknown'})
+    STADIUM: ${venue.name} (Location: ${venue.lat}, ${venue.lon})
     
     HISTORICAL BASELINES (DO NOT MODIFY):
     Home: ${JSON.stringify(baselines.home)}
@@ -90,14 +120,17 @@ const generateAnalysisPrompt = (req: any, baselines: any, date: string) => `
     SEARCH TARGETS (SEARCH ONLY FOR THESE):
     1. Confirmed/Projected Lineups for both ${req.homeTeamName} and ${req.awayTeamName}.
     2. Injury/Suspension reports (who is definitely OUT for today).
-    3. Local Weather conditions at the stadium.
-    4. Match Context (e.g. Is it a Derby? Is it a Dead-Rubber?).
-    5. Verified News (Last 12-24h regarding squad rotation or motivation).
+    3. Local Weather conditions at the stadium (${venue.name}).
+    4. Referee Assignment: Search for the assigned referee and their historical card/penalty rates.
+    5. Tactical Pressing Stats: Search for both teams' PPDA (Passes Per Defensive Action) and average defensive line height from FBref.
+    6. Match Context (e.g. Is it a Derby? Is it a Dead-Rubber?).
+    7. Verified News (Last 12-24h regarding squad rotation or motivation).
 
     OBJECTIVE:
     1. PERFORM GOOGLE SEARCH for the specific targets listed above.
     2. REASON: Based ONLY on the facts found in search, calculate numerical DELTAS (adjustments) to the historical npxG/npxGA baselines.
     3. SCHEMA: Return the JSON. If no news is found for a field, use 'STANDARD' or empty arrays and 0.0 deltas.`;
+};
 
 const getBaseline = (teamId: string): TeamMatchInput => {
     const b = getTeamBaseline(teamId);
@@ -145,7 +178,11 @@ const generateFallbackAnalysis = async (
         summary,
         dataSource: 'FALLBACK_STATIC',
         provenance: 'HEURISTIC_FALLBACK',
-        surety: MatchEngine.calculateConfidenceAudit(math.probability / 100, math.purity)
+        surety: MatchEngine.calculateConfidenceAudit(math.probability / 100, math.purity),
+        tacticalEdge: {
+            referee: { name: 'PENDING', cardRate: '0.0', penaltyRate: '0.0', tendency: 'AVERAGE' },
+            pressing: { homePPDA: 'N/A', awayPPDA: 'N/A', homeLineHeight: 'N/A', awayLineHeight: 'N/A' }
+        }
     };
 };
 
@@ -170,11 +207,37 @@ export const performAnalysis = async (rawReq: any): Promise<AnalysisResult> => {
     const date = new Date().toISOString().split('T')[0];
     
     SystemLog(`Ingesting real-time signals for ${req.homeTeamName} vs ${req.awayTeamName}...`);
-    const [leagueContext, liveOdds, liveWeather] = await Promise.all([
-        IngestionService.getLeagueContext(req.league || 'EPL').catch(() => ({ rhoData: { rho: -0.11, sigmaRho: 0.05 } })),
-        LiveOddsProvider.getOdds(req.league || 'EPL', `${req.homeTeamName}-${req.awayTeamName}`).catch(() => null),
-        WeatherProvider.getForecast(51.5, -0.1, date).catch(() => null)
+    const venue = VenueService.getVenue(req.homeTeam);
+    const season = "2023"; // Reference season
+    const league = req.league || 'EPL';
+
+    const [leagueContext, liveOdds, liveWeather, rapidFixtureId, allInjuries] = await Promise.all([
+        IngestionService.getLeagueContext(league).catch(() => ({ rhoData: { rho: -0.11, sigmaRho: 0.05 } })),
+        LiveOddsProvider.getOdds(league, `${req.homeTeamName}-${req.awayTeamName}`).catch(() => null),
+        WeatherProvider.getForecast(venue.lat, venue.lon, date).catch(() => null),
+        RapidApiFootballProvider.findFixtureId(req.homeTeamName, req.awayTeamName, league, season).catch(() => null),
+        RapidApiFootballProvider.fetchInjuries(league, season).catch(() => [])
     ]);
+
+    // Fetch fixture details for referee info
+    const fixtureDetails = rapidFixtureId ? await RapidApiFootballProvider.fetchFixtures(league, season).then(fs => fs.find(f => f.fixture.id === rapidFixtureId)).catch(() => null) : null;
+    const referee = fixtureDetails?.fixture.referee || 'UNKNOWN';
+
+    // Fetch lineups if we have a fixture ID
+    const lineups = rapidFixtureId ? await RapidApiFootballProvider.fetchLineups(rapidFixtureId).catch(() => null) : null;
+    
+    // Filter injuries for relevant teams
+    const relevantInjuries = allInjuries.filter((i: any) => 
+        i.team.name.toLowerCase().includes(req.homeTeamName.toLowerCase()) || 
+        i.team.name.toLowerCase().includes(req.awayTeamName.toLowerCase())
+    );
+
+    const groundTruthData = {
+        referee,
+        injuries: relevantInjuries.map((i: any) => ({ player: i.player.name, team: i.team.name, reason: i.player.reason, type: i.player.type })),
+        lineups: lineups ? lineups.map((l: any) => ({ team: l.team.name, formation: l.formation, startXI: l.startXI?.map((p: any) => p.player.name) })) : 'NOT_YET_AVAILABLE',
+        weather: liveWeather
+    };
 
     const marketOdds = liveOdds && liveOdds.over15 && liveOdds.under35
         ? { 
@@ -185,6 +248,14 @@ export const performAnalysis = async (rawReq: any): Promise<AnalysisResult> => {
           }
         : undefined;
 
+    const baselinesOutside = {
+        home: getBaseline(req.homeTeam),
+        away: getBaseline(req.awayTeam)
+    };
+
+    const promptBase = generateAnalysisPrompt(req, baselinesOutside, date);
+    const groundTruthPromptPart = `\n\nGROUND TRUTH DATA (VERIFIED PROVIDER):\n${JSON.stringify(groundTruthData, null, 2)}`;
+    
     const ai = getAI();
     let retryCount = 0;
     
@@ -214,6 +285,8 @@ export const performAnalysis = async (rawReq: any): Promise<AnalysisResult> => {
                     fetchedAt: new Date().toISOString()
                 } 
             };
+
+            const fullPrompt = generateAnalysisPrompt(req, baselines, date) + groundTruthPromptPart;
             
             // Map purity to sourceConfidence
             (baselines.home as any).sourceConfidence = (baselines.home as any).purity;
@@ -222,7 +295,7 @@ export const performAnalysis = async (rawReq: any): Promise<AnalysisResult> => {
             SystemLog(`Performing Grounded Research: ${modelName}`);
             const searchResponse = await ai.models.generateContent({
                 model: modelName,
-                contents: [{ role: "user", parts: [{ text: generateAnalysisPrompt(req, baselines, date) }] }],
+                contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
                 config: {
                     systemInstruction: SYSTEM_INSTRUCTION,
                     tools: [{ googleSearch: {} }] as any

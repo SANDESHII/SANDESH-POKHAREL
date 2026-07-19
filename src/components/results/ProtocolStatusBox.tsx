@@ -87,6 +87,11 @@ export const ProtocolStatusBox: React.FC<ProtocolStatusBoxProps> = ({ analysis }
                                         {analysis.provenance === 'HEURISTIC_FALLBACK' ? 'Heuristic Analysis Active' : 'Low Purity Signal Detected'}
                                     </span>
                                 </div>
+                            ) : analysis.modelAudit.signalPurity > 0.95 ? (
+                                <div className="mt-3 flex items-center gap-2 px-3 py-1.5 bg-cyan-500/10 border border-cyan-500/20 rounded-lg">
+                                    <Crown className="w-3 h-3 text-cyan-400" />
+                                    <span className="text-[8px] font-black text-cyan-400 uppercase tracking-widest">Verified Data Provider Active</span>
+                                </div>
                             ) : (
                                 <div className="mt-3 flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
                                     <Zap className="w-3 h-3 text-emerald-500" />

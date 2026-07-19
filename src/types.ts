@@ -91,6 +91,8 @@ export interface RawMatchData {
     awayShots?: number;
     homeShotsOnTarget?: number;
     awayShotsOnTarget?: number;
+    homeXG?: number;
+    awayXG?: number;
     date: string;
     signature?: string;
     unresolved?: boolean;
@@ -202,6 +204,20 @@ export interface AnalysisResult {
     surety?: AnalysisConfidence;
     sources?: string[];
     provenance?: 'AI_GROUNDED' | 'HEURISTIC_FALLBACK';
+    tacticalEdge?: {
+        referee?: {
+            name: string;
+            cardRate: string;
+            penaltyRate: string;
+            tendency: 'STRICT' | 'LENIENT' | 'AVERAGE';
+        };
+        pressing?: {
+            homePPDA: string;
+            awayPPDA: string;
+            homeLineHeight: string;
+            awayLineHeight: string;
+        };
+    };
     realTimeData?: {
         homeLineup?: string[];
         awayLineup?: string[];

@@ -88,6 +88,8 @@ export class IngestionValidator {
             const awayShots = this.safeNumber(row.awayShots ?? row.AS);
             const homeShotsOnTarget = this.safeNumber(row.homeShotsOnTarget ?? row.HST);
             const awayShotsOnTarget = this.safeNumber(row.awayShotsOnTarget ?? row.AST);
+            const homeXG = this.safeNumber(row.homeXG ?? row.xG_home);
+            const awayXG = this.safeNumber(row.awayXG ?? row.xG_away);
 
             if (homeGoals !== undefined && (homeGoals < 0 || homeGoals > 15)) {
                 console.warn(`[VALIDATOR] Rejected match: Goals out of range (${homeGoals}-${awayGoals})`);
@@ -108,6 +110,8 @@ export class IngestionValidator {
                 awayShots,
                 homeShotsOnTarget,
                 awayShotsOnTarget,
+                homeXG,
+                awayXG,
                 league,
                 season,
                 signature: `${date}_${homeTeam}_${awayTeam}_${league}`,

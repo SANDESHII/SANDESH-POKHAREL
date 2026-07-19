@@ -1,4 +1,4 @@
-import { TeamStats, MatchContext } from '../types';
+import { TeamStats, MatchContext, RawMatchData } from '../types';
 
 export interface TeamMatchInput {
     teamId: string;
@@ -8,18 +8,6 @@ export interface TeamMatchInput {
     sourceConfidence: number;   // 1.0 for verified provider, 0.6 for AI estimate, 0.0 for insufficient
     npxGVariance?: number;
     fetchedAt: string;
-}
-
-export interface RawMatchData {
-    homeTeam: string;
-    awayTeam: string;
-    date: string;
-    homeGoals?: number;
-    awayGoals?: number;
-    league: string;
-    season: string;
-    signature?: string;
-    unresolved?: boolean;
 }
 
 export interface IngestedSignal {

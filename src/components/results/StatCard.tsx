@@ -12,7 +12,8 @@ interface StatCardProps {
 }
 
 export const StatCard: React.FC<StatCardProps> = ({ label, value, subValue, icon: Icon, isOver = true, purity }) => {
-    const isBaseline = purity !== undefined && purity < 90;
+    const isHighFidelity = purity !== undefined && purity >= 95;
+    const isLowPurity = purity !== undefined && purity < 40;
     const theme = isOver ? 'blue' : 'emerald';
     
     return (
@@ -25,8 +26,11 @@ export const StatCard: React.FC<StatCardProps> = ({ label, value, subValue, icon
                 <h4 className="text-3xl font-black text-white">{value}</h4>
                 <div className="flex items-center gap-2">
                     <p className="text-[10px] font-black text-zinc-800 uppercase tracking-widest">{subValue}</p>
-                    {isBaseline && (
-                        <span className="text-[8px] font-black text-amber-500/50 bg-amber-500/5 px-1.5 py-0.5 rounded border border-amber-500/10 uppercase tracking-widest">Baseline</span>
+                    {isHighFidelity && (
+                        <span className="text-[8px] font-black text-emerald-500/80 bg-emerald-500/5 px-1.5 py-0.5 rounded border border-emerald-500/10 uppercase tracking-widest">High-Fidelity</span>
+                    )}
+                    {isLowPurity && (
+                        <span className="text-[8px] font-black text-amber-500/50 bg-amber-500/5 px-1.5 py-0.5 rounded border border-amber-500/10 uppercase tracking-widest">Baseline Estimate</span>
                     )}
                 </div>
             </div>
