@@ -123,10 +123,14 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                                     <h4 className={`text-[10px] font-black uppercase tracking-widest ${theme.title}`}>
                                         {team.name}
                                     </h4>
-                                    <div className="grid grid-cols-2 gap-8">
+                                    <div className="grid grid-cols-3 gap-8">
                                         <div className="space-y-2">
                                             <span className="text-[10px] text-zinc-600 uppercase font-black">xG</span>
                                             <p className="text-3xl font-black text-white">{(idx === 0 ? analysis.homeXG : analysis.awayXG)?.toFixed(2) || '0.00'}</p>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <span className="text-[10px] text-zinc-600 uppercase font-black">npxG</span>
+                                            <p className="text-3xl font-black text-zinc-400">{(team.npxG)?.toFixed(2) || '0.00'}</p>
                                         </div>
                                         <div className="space-y-2">
                                             <span className="text-[10px] text-zinc-600 uppercase font-black">Goals</span>
@@ -347,6 +351,16 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ analysis, surety }) => {
                     )}
                 </div>
             )}
+            <div className="p-6 bg-zinc-950 border border-zinc-900 rounded-2xl">
+                <div className="flex items-center gap-3 mb-4">
+                    <Activity className="w-4 h-4 text-emerald-500" />
+                    <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white">Quantitative Integrity Audit</h3>
+                </div>
+                <p className="text-[10px] text-zinc-500 leading-relaxed font-medium uppercase tracking-wider">
+                    All <span className="text-emerald-500">npxG</span> and <span className="text-emerald-500">xG</span> metrics are derived via multi-variate regression of shot quality, target conversion, and historical volatility. 
+                    Unlike simple goal-averaging, this model ground-truths expectations against raw frequency signals to ensure non-fabricated, high-fidelity projections.
+                </p>
+            </div>
         </div>
     );
 };

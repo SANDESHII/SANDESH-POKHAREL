@@ -84,6 +84,10 @@ export class IngestionValidator {
             // Normalize goals with strict NA/NaN verification
             const homeGoals = this.safeNumber(row.homeGoals ?? row.FTHG);
             const awayGoals = this.safeNumber(row.awayGoals ?? row.FTAG);
+            const homeShots = this.safeNumber(row.homeShots ?? row.HS);
+            const awayShots = this.safeNumber(row.awayShots ?? row.AS);
+            const homeShotsOnTarget = this.safeNumber(row.homeShotsOnTarget ?? row.HST);
+            const awayShotsOnTarget = this.safeNumber(row.awayShotsOnTarget ?? row.AST);
 
             if (homeGoals !== undefined && (homeGoals < 0 || homeGoals > 15)) {
                 console.warn(`[VALIDATOR] Rejected match: Goals out of range (${homeGoals}-${awayGoals})`);
@@ -100,6 +104,10 @@ export class IngestionValidator {
                 date,
                 homeGoals,
                 awayGoals,
+                homeShots,
+                awayShots,
+                homeShotsOnTarget,
+                awayShotsOnTarget,
                 league,
                 season,
                 signature: `${date}_${homeTeam}_${awayTeam}_${league}`,

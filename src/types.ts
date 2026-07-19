@@ -87,9 +87,15 @@ export interface RawMatchData {
     awayTeam: string;
     homeGoals: number;
     awayGoals: number;
+    homeShots?: number;
+    awayShots?: number;
+    homeShotsOnTarget?: number;
+    awayShotsOnTarget?: number;
     date: string;
     signature?: string;
     unresolved?: boolean;
+    league?: string;
+    season?: string;
 }
 
 export interface AnalysisConfidence {
